@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Contact &mdash; Face Grouping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<header class="header">
+  <div class="sprockets" aria-hidden="true"></div>
+  <div class="header-inner">
+    <h1 class="wordmark">Contact<span class="wordmark-accent">.</span></h1>
+    <p class="tagline">Point it at a Drive folder. It finds the faces and sorts the people.</p>
+  </div>
+  <div class="sprockets" aria-hidden="true"></div>
+</header>
+
+<main class="main">
+
+  <section class="loader-panel" id="loader-panel">
+    <label class="field-label" for="folder-input">Google Drive folder ID</label>
+    <div class="loader-row">
+      <input id="folder-input" type="text" placeholder="e.g. 1a2B3cD4EfGhIjKlmNoPQrstuVWxyz" autocomplete="off" />
+      <button id="process-btn" class="btn-primary">Process folder</button>
+    </div>
+    <p class="hint">Find this in the folder's Drive URL: drive.google.com/drive/folders/<strong>&lt;this part&gt;</strong></p>
+    <div id="status-line" class="status-line" hidden>
+      <div class="status-bar"><div class="status-bar-fill" id="status-fill"></div></div>
+      <p id="status-text" class="status-text"></p>
+    </div>
+  </section>
+
+  <section id="people-view" class="people-view" hidden>
+    <div class="section-heading">
+      <h2>People found <span id="people-count" class="frame-count"></span></h2>
+      <button id="back-to-loader" class="btn-ghost">New folder</button>
+    </div>
+    <div id="people-grid" class="people-grid"></div>
+  </section>
+
+  <section id="detail-view" class="detail-view" hidden>
+    <div class="section-heading">
+      <button id="back-to-people" class="btn-ghost">&larr; All people</button>
+      <input id="person-label-input" class="person-label-input" />
+    </div>
+    <div id="photo-grid" class="photo-grid"></div>
+  </section>
+
+</main>
+
+<div id="lightbox" class="lightbox" hidden>
+  <button id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" src="" alt="" />
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
