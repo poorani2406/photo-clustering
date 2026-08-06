@@ -188,7 +188,3 @@ data/                      Created at runtime: downloaded images + app.db (gitig
 - [ ] Basic auth / multi-user support ahead of any real deployment
 - [ ] Automated tests around the clustering merge logic
 - [ ] Optional GPU path documented end-to-end
-
-## License
-
-[MIT](LICENSE) — see the License section of the accompanying repo review for reasoning.
