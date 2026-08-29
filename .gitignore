@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+data/
+credentials.json
+token.json
+.env
+
+*.db
+*.db-journal
+*.sqlite*
+debug_faces/

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Contact &mdash; Face Grouping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=IBM+Plex+Mono:wght@300;400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<header class="header">
+  <div class="sprockets" aria-hidden="true"></div>
+  <div class="header-inner">
+    <h1 class="wordmark">Contact<span class="wordmark-accent">.</span></h1>
+    <p class="tagline">Secure in-memory Face Detection, Clustering & Dynamic Downloads</p>
+  </div>
+  <div class="sprockets" aria-hidden="true"></div>
+</header>
+
+<main class="main">
+
+  <!-- Processing / Loader panel -->
+  <section class="loader-panel" id="loader-panel">
+    <h2 class="section-title">Analyze Drive Folders</h2>
+    <p class="section-desc">Enter one or multiple Google Drive folder links or IDs. The pipeline runs securely in transient memory without disk storage.</p>
+    
+    <div id="folders-container" class="folders-container">
+      <!-- Added dynamically via JS, starting with one by default -->
+    </div>
+    
+    <div class="loader-controls">
+      <button id="add-folder-btn" class="btn-secondary" type="button">+ Add another folder</button>
+      <button id="process-btn" class="btn-primary" type="button">Start Processing &rarr;</button>
+    </div>
+    
+    <div id="status-line" class="status-line" hidden>
+      <div class="status-bar"><div class="status-bar-fill" id="status-fill"></div></div>
+      
+      <!-- Premium Stats Panel -->
+      <div class="stats-deck" id="stats-deck">
+        <div class="stat-card">
+          <span class="stat-val" id="stat-discovered">0</span>
+          <span class="stat-lbl">Files Discovered</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val" id="stat-skipped">0</span>
+          <span class="stat-lbl">Duplicates Skipped</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val" id="stat-processed">0</span>
+          <span class="stat-lbl">Unique Processed</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val" id="stat-faces">0</span>
+          <span class="stat-lbl">Faces Detected</span>
+        </div>
+      </div>
+      
+      <p id="status-text" class="status-text"></p>
+    </div>
+  </section>
+
+  <!-- Completion panel -->
+  <section class="loader-panel" id="completion-panel" hidden>
+    <div style="text-align: center; margin-bottom: 24px;">
+      <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(102, 252, 241, 0.1); color: var(--accent); font-size: 2rem; font-weight: 700; margin-bottom: 16px;">✓</div>
+      <h2 class="section-title">Analysis Complete</h2>
+      <p class="section-desc">Google Drive folders processed. Face grouping completed in-memory.</p>
+    </div>
+    
+    <!-- Final Stats Panel -->
+    <div class="stats-deck">
+      <div class="stat-card">
+        <span class="stat-val" id="final-discovered">0</span>
+        <span class="stat-lbl">Files Discovered</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="final-skipped">0</span>
+        <span class="stat-lbl">Duplicates Skipped</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="final-processed">0</span>
+        <span class="stat-lbl">Unique Processed</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="final-faces">0</span>
+        <span class="stat-lbl">Faces Detected</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="final-people">0</span>
+        <span class="stat-lbl">People Found</span>
+      </div>
+    </div>
+    
+    <div class="loader-controls" style="margin-top: 30px; display: flex; justify-content: center; gap: 16px;">
+      <button id="completion-back-btn" class="btn-secondary" type="button">&larr; Back to Home</button>
+      <button id="completion-view-btn" class="btn-primary" type="button">View Results &rarr;</button>
+    </div>
+  </section>
+
+  <!-- People / Results panel -->
+  <section id="people-view" class="people-view" hidden>
+    <div class="section-heading">
+      <h2>People found <span id="people-count" class="frame-count"></span></h2>
+      <button id="back-to-home" class="btn-secondary">&larr; Back to Home</button>
+    </div>
+    <div id="people-grid" class="people-grid"></div>
+  </section>
+
+  <!-- Detail / Photo grid view -->
+  <section id="detail-view" class="detail-view" hidden>
+    <div class="detail-header-row">
+      <div class="title-section">
+        <button id="back-to-people" class="btn-ghost">&larr; All people</button>
+        <input id="person-label-input" class="person-label-input" placeholder="Rename person..." />
+      </div>
+      
+      <!-- Selection & download controls -->
+      <div class="selection-controls">
+        <span id="selected-count" class="selected-count">0 selected</span>
+        <button id="select-all-btn" class="btn-secondary">Select All</button>
+        <button id="deselect-all-btn" class="btn-secondary">Deselect All</button>
+        <button id="download-selected-btn" class="btn-primary" disabled>Download Selected</button>
+        <button id="download-all-btn" class="btn-primary">Download All</button>
+      </div>
+    </div>
+    <div id="photo-grid" class="photo-grid"></div>
+  </section>
+
+</main>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox" hidden>
+  <button id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" src="" alt="" />
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
