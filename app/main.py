@@ -132,7 +132,7 @@ def _stream_zip(photos: list[dict]):
 # ---------- Route Handlers ----------
 
 @app.post("/api/process")
-async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
+def process_folder(req: ProcessRequest):
     """
     Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
     Requires no OAuth or user login.
@@ -161,10 +161,12 @@ async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks)
     for link in links:
         db.create_job_source(job_id, link)
         
-    # Dispatch worker via FastAPI BackgroundTasks
-    background_tasks.add_task(run_job, job_id, links)
+    # Dispatch background worker immediately in a dedicated thread
+    thread = threading.Thread(target=run_job, args=(job_id, links), daemon=True)
+    thread.start()
     
     return {"job_id": public_token}
+
 
 
 
