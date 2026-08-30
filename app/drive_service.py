@@ -138,7 +138,8 @@ def get_drive_service(api_key: Optional[str] = None):
             "GOOGLE_DRIVE_API_KEY environment variable is not configured on the server. "
             "Please set GOOGLE_DRIVE_API_KEY to access publicly shared Google Drive folders."
         )
-    return build("drive", "v3", developerKey=key.strip())
+    return build("drive", "v3", developerKey=key.strip(), static_discovery=False)
+
 
 
 def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = None) -> list:

@@ -27,6 +27,14 @@ the optional face3d C++/Cython extension by default, which is what was
 requiring Visual Studio Build Tools on Windows.
 """
 import os
+
+# Limit CPU threading to prevent OOM / thread explosion on cloud containers
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import numpy as np
 from insightface.app import FaceAnalysis
 import insightface.utils.storage as storage
@@ -50,6 +58,7 @@ class InsightFaceEngine(FaceEngine):
             model_name = os.getenv("INSIGHTFACE_MODEL", "buffalo_s")
         print(f"[FACE ENGINE] Starting initialization (model: {model_name}, ctx_id: {ctx_id}, det_size: {det_size})...")
         print(f"[FACE ENGINE] Creating FaceAnalysis instance for CPU (model: {model_name}, modules: detection, recognition)...")
+        
         # Explicitly configure CPU execution provider without searching for CUDA
         self._app = FaceAnalysis(
             name=model_name,
@@ -63,6 +72,7 @@ class InsightFaceEngine(FaceEngine):
         dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
         self._app.get(dummy_img)
         print(f"[FACE ENGINE] Face engine ({model_name}) ready and pre-warmed.")
+
 
 
 
