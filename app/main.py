@@ -6,7 +6,7 @@ import threading
 import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -182,7 +182,7 @@ def initiate_oauth(req: ProcessRequest, request: Request):
 
 
 @app.get("/api/oauth/callback")
-def oauth_callback(code: str, state: str, request: Request):
+def oauth_callback(request: Request,code: str = Query(...),state: str = Query(...),):    
     public_token = db.pop_oauth_state(state)
     if not public_token:
         raise HTTPException(400, "Invalid or expired state token.")
