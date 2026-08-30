@@ -26,22 +26,24 @@ the pinned version specifically because, unlike 0.7.3, it doesn't build
 the optional face3d C++/Cython extension by default, which is what was
 requiring Visual Studio Build Tools on Windows.
 """
+import os
 import numpy as np
 from insightface.app import FaceAnalysis
-
 
 from app.face_engine.base import FaceEngine
 
 
 class InsightFaceEngine(FaceEngine):
-    def __init__(self, model_name: str = "buffalo_l", ctx_id: int = -1, det_size=(640, 640)):
+    def __init__(self, model_name: str | None = None, ctx_id: int = -1, det_size=(640, 640)):
         """
-        model_name: InsightFace model pack.
+        model_name: InsightFace model pack (default 'buffalo_s' for low RAM footprint, configurable via INSIGHTFACE_MODEL).
         ctx_id: -1 for CPU execution.
         allowed_modules: loads only detection + recognition (ArcFace), skipping unused 3D/landmark/genderage models.
         """
+        if model_name is None:
+            model_name = os.getenv("INSIGHTFACE_MODEL", "buffalo_s")
         print(f"[FACE ENGINE] Starting initialization (model: {model_name}, ctx_id: {ctx_id}, det_size: {det_size})...")
-        print("[FACE ENGINE] Creating FaceAnalysis instance for CPU (modules: detection, recognition)...")
+        print(f"[FACE ENGINE] Creating FaceAnalysis instance for CPU (model: {model_name}, modules: detection, recognition)...")
         # Explicitly configure CPU execution provider without searching for CUDA
         self._app = FaceAnalysis(
             name=model_name,
@@ -54,7 +56,8 @@ class InsightFaceEngine(FaceEngine):
         # First test inference warmup on dummy image
         dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
         self._app.get(dummy_img)
-        print("[FACE ENGINE] Face engine ready and pre-warmed.")
+        print(f"[FACE ENGINE] Face engine ({model_name}) ready and pre-warmed.")
+
 
 
     def detect_faces(self, image_bytes: bytes) -> list[dict]:
