@@ -7,7 +7,7 @@ import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image
@@ -428,6 +428,200 @@ def download_person_zip(person_id: int, req: PersonDownloadRequest):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=person_{person_id}.zip"}
     )
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Privacy Policy - Photo Clustering</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 900px;
+                margin: 40px auto;
+                padding: 20px;
+                line-height: 1.6;
+            }
+            h1, h2 {
+                color: #222;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Privacy Policy</h1>
+
+        <p><strong>Last updated:</strong> August 30, 2026</p>
+
+        <p>
+            Photo Clustering is a web application that helps users organize
+            and cluster photos based on detected faces.
+        </p>
+
+        <h2>Google Drive Access</h2>
+
+        <p>
+            Photo Clustering uses Google OAuth to allow users to select and
+            access photos from their Google Drive. The application requests
+            read-only access to Google Drive files.
+        </p>
+
+        <p>
+            We use Google Drive access only to retrieve photos that are
+            processed by the application for face detection and clustering.
+        </p>
+
+        <h2>Information We Access</h2>
+
+        <p>
+            Depending on how you use the application, we may access photo
+            files and basic Google Drive file information such as file names,
+            file IDs, and MIME types.
+        </p>
+
+        <h2>How We Use Your Information</h2>
+
+        <p>
+            The information accessed from Google Drive is used only to provide
+            the photo clustering functionality of the application.
+        </p>
+
+        <h2>Storage</h2>
+
+        <p>
+            Photos may be temporarily downloaded and processed by the
+            application while performing clustering. We do not sell or
+            distribute users' photos or Google Drive information to third
+            parties.
+        </p>
+
+        <h2>Google User Data</h2>
+
+        <p>
+            Photo Clustering does not use Google user data for advertising,
+            selling data, or unrelated purposes.
+        </p>
+
+        <h2>Data Security</h2>
+
+        <p>
+            We take reasonable measures to protect information processed by
+            the application. However, no internet-based service can guarantee
+            absolute security.
+        </p>
+
+        <h2>Data Deletion</h2>
+
+        <p>
+            Users can stop the application's access to their Google Drive by
+            removing the application's access from their Google Account.
+            Temporary application data is removed according to the
+            application's data-retention practices.
+        </p>
+
+        <h2>Contact</h2>
+
+        <p>
+            If you have questions about this Privacy Policy or the use of
+            Google Drive data, contact:
+        </p>
+
+        <p>
+            <strong>poorani24official@gmail.com</strong>
+        </p>
+    </body>
+    </html>
+    """
+
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms_of_service():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Terms of Service - Photo Clustering</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 900px;
+                margin: 40px auto;
+                padding: 20px;
+                line-height: 1.6;
+            }
+            h1, h2 {
+                color: #222;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Terms of Service</h1>
+
+        <p><strong>Last updated:</strong> August 30, 2026</p>
+
+        <h2>Acceptance of Terms</h2>
+
+        <p>
+            By using Photo Clustering, you agree to these Terms of Service.
+            If you do not agree with these terms, please do not use the
+            application.
+        </p>
+
+        <h2>Description of the Service</h2>
+
+        <p>
+            Photo Clustering is a web application that helps users organize
+            photos by detecting and clustering faces in images.
+        </p>
+
+        <h2>Google Drive</h2>
+
+        <p>
+            Users may connect their Google Drive account to provide photos
+            for processing. You are responsible for ensuring that you have
+            the necessary rights to access and process the photos you provide.
+        </p>
+
+        <h2>Acceptable Use</h2>
+
+        <p>
+            You agree not to use the application for unlawful purposes or to
+            attempt to interfere with, damage, or gain unauthorized access to
+            the service.
+        </p>
+
+        <h2>Availability</h2>
+
+        <p>
+            Photo Clustering is provided on an "as is" basis. We do not
+            guarantee that the service will always be available or
+            error-free.
+        </p>
+
+        <h2>Changes to the Service</h2>
+
+        <p>
+            We may modify, update, or discontinue parts of the application
+            when necessary.
+        </p>
+
+        <h2>Contact</h2>
+
+        <p>
+            For questions regarding these Terms of Service, contact:
+        </p>
+
+        <p>
+            <strong>poorani24official@gmail.com</strong>
+        </p>
+    </body>
+    </html>
+    """
+
+
 
 
 # Serve frontend static assets last
