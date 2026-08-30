@@ -9,8 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File
-from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File, BackgroundTasks
+from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image
@@ -28,11 +28,11 @@ db.init_db()
 print("[PROCESS STARTUP] Photo Clustering FastAPI application loaded and ready.")
 
 
-@app.on_event("startup")
-def startup_event():
-    print("[PROCESS STARTUP] Initiating background pre-warming of InsightFace CPU engine...")
-    from app.face_engine import get_face_engine
-    threading.Thread(target=get_face_engine, daemon=True).start()
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return JSONResponse({"status": "ok", "app": "Photo Clustering"})
+
 
 
 
@@ -132,7 +132,7 @@ def _stream_zip(photos: list[dict]):
 # ---------- Route Handlers ----------
 
 @app.post("/api/process")
-def process_folder(req: ProcessRequest):
+async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
     """
     Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
     Requires no OAuth or user login.
@@ -161,11 +161,11 @@ def process_folder(req: ProcessRequest):
     for link in links:
         db.create_job_source(job_id, link)
         
-    # Start the job sequentially in a background thread
-    thread = threading.Thread(target=run_job, args=(job_id, links), daemon=True)
-    thread.start()
+    # Dispatch worker via FastAPI BackgroundTasks
+    background_tasks.add_task(run_job, job_id, links)
     
     return {"job_id": public_token}
+
 
 
 
