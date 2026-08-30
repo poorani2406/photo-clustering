@@ -12,25 +12,28 @@ Runs on a background thread so the HTTP request that kicks it off can
 return immediately, and the frontend polls /api/jobs/{id} for progress.
 """
 import traceback
+import os
 import cv2
 import numpy as np
 
 from app import db
-from app.config import MAX_FILE_SIZE_BYTES, MAX_FILES_PER_JOB
+from app.config import DATA_DIR, MAX_FILE_SIZE_BYTES, MAX_FILES_PER_JOB
 from app.drive_service import (
     get_drive_service,
     list_images_in_folder,
     parse_drive_link,
     fetch_file_bytes,
     DriveApiError,
+    DriveErrorCategory,
+    InvalidDriveLinkError,
 )
 from app.face_engine import get_face_engine
 from app.clustering import cluster_faces
 
 
-def _process_source(job_id: int, source_id: int, raw_link: str) -> list[dict]:
+def _process_source(job_id: int, source_id: int, raw_link: str) -> tuple[list[dict], str]:
     """Parses, connects, and lists files for a single source.
-    Handles individual source failure gracefully without failing the entire job."""
+    Returns (files, error_message). If successful, error_message is empty."""
     try:
         # Parse Drive Link
         link_info = parse_drive_link(raw_link)
@@ -46,8 +49,7 @@ def _process_source(job_id: int, source_id: int, raw_link: str) -> list[dict]:
             message="Listing files in Drive folder..."
         )
 
-        token_json = db.get_oauth_token(job_id)
-        service = get_drive_service(token_json)
+        service = get_drive_service()
         files = list_images_in_folder(service, folder_id, resourcekey)
 
         # Update source to completed
@@ -62,17 +64,33 @@ def _process_source(job_id: int, source_id: int, raw_link: str) -> list[dict]:
             f["source_id"] = source_id
             f["resourcekey"] = resourcekey
 
-        return files
+        return files, ""
+
+    except InvalidDriveLinkError as e:
+        err_msg = "Invalid Google Drive folder link. Please provide a valid Google Drive folder URL or ID."
+        print(f"[ERROR] [_process_source job_id={job_id} source_id={source_id}] {err_msg}")
+        db.update_job_source(source_id, status="failed", message=err_msg)
+        return [], err_msg
+
+    except DriveApiError as e:
+        if e.category == DriveErrorCategory.NOT_FOUND_OR_PRIVATE:
+            err_msg = "This Google Drive folder is not publicly accessible. Please change the folder sharing setting to Anyone with the link -> Viewer and try again."
+        elif e.category == DriveErrorCategory.DOMAIN_RESTRICTED:
+            err_msg = "This Google Drive folder is restricted to specific organization domains. Please share as Anyone with the link -> Viewer."
+        elif e.category == DriveErrorCategory.QUOTA_EXCEEDED:
+            err_msg = "Google Drive API rate limit or quota exceeded. Please try again later."
+        else:
+            err_msg = f"Google Drive API error: {e}"
+
+        print(f"[ERROR] [_process_source job_id={job_id} source_id={source_id}] {err_msg}")
+        db.update_job_source(source_id, status="failed", message=err_msg)
+        return [], err_msg
 
     except Exception as e:
-        err_msg = f"{type(e).__name__}: {e}"
+        err_msg = f"Error accessing Drive folder: {e}"
         print(f"[ERROR] [_process_source job_id={job_id} source_id={source_id}] {err_msg}")
-        db.update_job_source(
-            source_id,
-            status="failed",
-            message=err_msg
-        )
-        return []
+        db.update_job_source(source_id, status="failed", message=err_msg)
+        return [], err_msg
 
 
 def _merge_and_dedupe(all_source_files: list[dict]) -> tuple[list[dict], int]:
@@ -117,16 +135,24 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
         return True
     seen_hashes.add(content_hash)
 
-    # 4. Decode image from bytes in memory
+    # 4. Save to per-job storage for fast thumbnails & ZIP streaming
+    job_dir = DATA_DIR / "images" / str(job_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{file_id}_{os.path.basename(filename)}"
+    storage_path = str(job_dir / safe_name)
+    with open(storage_path, "wb") as f_out:
+        f_out.write(file_bytes)
+
+    # 5. Decode image from bytes in memory
     img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         print(f"[WARNING] Skipping {filename} ({file_id}) because image decoding failed.")
         return False
 
-    # 5. Pass image bytes to face_engine.detect_faces()
+    # 6. Pass image bytes to face_engine.detect_faces()
     faces = face_engine.detect_faces(file_bytes)
 
-    # 6. Persist photo using new Phase 2 schema with content_hash
+    # 7. Persist photo record
     photo_id = db.insert_photo(
         job_id=job_id,
         source_id=source_id,
@@ -134,10 +160,11 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
         filename=filename,
         mime_type=mime_type,
         size_bytes=size_bytes,
-        content_hash=content_hash
+        content_hash=content_hash,
+        storage_path=storage_path
     )
 
-    # 7. Persist faces
+    # 8. Persist faces
     for face in faces:
         db.insert_face(
             photo_id,
@@ -155,8 +182,13 @@ def run_job(job_id: int, folder_links: list[str]):
     face_engine = get_face_engine()
     try:
         db.update_job(job_id, status="connecting", message="Connecting to Google Drive...")
-        token_json = db.get_oauth_token(job_id)
-        service = get_drive_service(token_json)
+        
+        try:
+            service = get_drive_service()
+        except Exception as e:
+            err_msg = str(e)
+            db.update_job(job_id, status="error", message=err_msg)
+            return
 
         # Retrieve job sources from database, or create them if they do not exist
         existing_sources = db.get_sources_for_job(job_id)
@@ -166,9 +198,12 @@ def run_job(job_id: int, folder_links: list[str]):
             existing_sources = db.get_sources_for_job(job_id)
 
         all_files = []
+        last_error = ""
         for source in existing_sources:
-            files = _process_source(job_id, source["id"], source["raw_link"])
+            files, err_msg = _process_source(job_id, source["id"], source["raw_link"])
             all_files.extend(files)
+            if err_msg:
+                last_error = err_msg
 
         # Merge and Deduplicate (Level 1)
         total_discovered = len(all_files)
@@ -176,12 +211,14 @@ def run_job(job_id: int, folder_links: list[str]):
         db.update_job(job_id, total_files=total_discovered, duplicate_files_skipped=duplicate_count)
 
         if not deduped_files:
+            error_message = last_error or "No images found in that folder. Please make sure the folder contains images (JPEG, PNG, WEBP, HEIC) and is shared as Anyone with the link -> Viewer."
             db.update_job(
                 job_id,
                 status="error",
-                message="No images found in that folder. Check the folder ID and sharing access.",
+                message=error_message,
             )
             return
+
 
         # Enforce MAX_FILES_PER_JOB limit
         if len(deduped_files) > MAX_FILES_PER_JOB:
@@ -243,3 +280,127 @@ def run_job(job_id: int, folder_links: list[str]):
     except Exception as e:
         db.update_job(job_id, status="error", message=f"{type(e).__name__}: {e}")
         traceback.print_exc()
+
+
+
+def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
+    """
+    Orchestrates the facial detection and clustering pipeline for user-uploaded images.
+    image_items: list of (filename, file_path_str, mime_type)
+    """
+    import os
+    import hashlib
+    face_engine = get_face_engine()
+    try:
+        total_discovered = len(image_items)
+        db.update_job(
+            job_id,
+            status="detecting",
+            total_files=total_discovered,
+            duplicate_files_skipped=0,
+            processed_files=0,
+            message="Starting face detection on uploaded photos..."
+        )
+
+        if not image_items:
+            db.update_job(
+                job_id,
+                status="error",
+                message="No valid images were found in the upload.",
+            )
+            return
+
+        seen_hashes = set()
+        level_2_skips = 0
+        processed_count = 0
+
+        for i, (filename, file_path_str, mime_type) in enumerate(image_items, start=1):
+            db.update_job(
+                job_id,
+                status="detecting",
+                processed_files=processed_count,
+                message=f"Processing {filename} ({i}/{len(image_items)})",
+            )
+            try:
+                with open(file_path_str, "rb") as f:
+                    file_bytes = f.read()
+
+                size_bytes = len(file_bytes)
+                if size_bytes > MAX_FILE_SIZE_BYTES:
+                    print(f"[WARNING] Skipping {filename} because size {size_bytes} exceeds limit of {MAX_FILE_SIZE_BYTES} bytes.")
+                    continue
+
+                content_hash = hashlib.sha256(file_bytes).hexdigest()
+                if content_hash in seen_hashes:
+                    print(f"[DEBUG] Skipping content duplicate for job {job_id}: {filename} (hash={content_hash})")
+                    level_2_skips += 1
+                    db.update_job(job_id, duplicate_files_skipped=level_2_skips)
+                    continue
+                seen_hashes.add(content_hash)
+
+                img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    print(f"[WARNING] Skipping {filename} because image decoding failed.")
+                    continue
+
+                faces = face_engine.detect_faces(file_bytes)
+
+                photo_id = db.insert_photo(
+                    job_id=job_id,
+                    source_id=0,
+                    drive_file_id=os.path.basename(file_path_str),
+                    filename=filename,
+                    mime_type=mime_type,
+                    size_bytes=size_bytes,
+                    content_hash=content_hash,
+                    storage_path=file_path_str
+                )
+
+                for face in faces:
+                    db.insert_face(
+                        photo_id,
+                        face["top"],
+                        face["right"],
+                        face["bottom"],
+                        face["left"],
+                        face["embedding"]
+                    )
+                db.set_photo_face_count(photo_id, len(faces))
+
+                processed_count += 1
+                db.update_job(job_id, processed_files=processed_count)
+
+            except Exception as fe:
+                print(f"[ERROR] Failed processing file {filename}: {fe}")
+
+        db.update_job(
+            job_id,
+            status="clustering",
+            message="Grouping faces into people...",
+            processed_files=processed_count
+        )
+
+        face_rows = db.get_faces_for_job(job_id)
+        assignments = cluster_faces(face_rows)
+
+        db.clear_people_for_job(job_id)
+
+        cluster_to_person = {}
+        for face in face_rows:
+            cluster_idx = assignments[face["id"]]
+            if cluster_idx not in cluster_to_person:
+                person_id = db.create_person(job_id, f"Person {cluster_idx + 1}", face["id"])
+                cluster_to_person[cluster_idx] = person_id
+            db.set_face_person(face["id"], cluster_to_person[cluster_idx])
+
+        people_count = len(cluster_to_person)
+        db.update_job(
+            job_id,
+            status="done",
+            message=f"Done. Found {people_count} distinct people across {processed_count} photos.",
+        )
+
+    except Exception as e:
+        db.update_job(job_id, status="error", message=f"{type(e).__name__}: {e}")
+        traceback.print_exc()
+

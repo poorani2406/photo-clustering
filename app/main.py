@@ -4,9 +4,12 @@ import secrets
 import json
 import threading
 import datetime
+import zipfile
+import shutil
+from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File
 from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,7 +17,8 @@ from PIL import Image
 from stream_zip import stream_zip, ZIP_32
 
 from app import db
-from app.pipeline import run_job
+from app.config import DATA_DIR, MAX_FILE_SIZE_BYTES, MAX_FILES_PER_JOB, IMAGE_MIME_TYPES
+from app.pipeline import run_job, run_direct_upload_job
 
 
 app = FastAPI(title="Photo Clustering")
@@ -44,65 +48,48 @@ class PersonDownloadRequest(BaseModel):
     public_job_token: str
 
 
-# ---------- Helpers ----------
-
-def _get_redirect_uri(request: Request) -> str:
-    """Builds the canonical OAuth redirect URI for this server."""
-    redirect_override = os.getenv("OAUTH_REDIRECT_URI")
-    if redirect_override and redirect_override.strip():
-        return redirect_override.strip()
-
-    # Detect protocol from proxy headers (Render, Cloudflare, Nginx, etc.)
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.url.netloc)
-    if "onrender.com" in host or proto == "https":
-        proto = "https"
-
-    return f"{proto}://{host}/api/oauth/callback"
-
-
-def _create_oauth_flow(request: Request):
-    """Creates a Google OAuth Flow using either client JSON env var or credentials file."""
-    from app.config import get_google_client_config, GOOGLE_SCOPES
-    from google_auth_oauthlib.flow import Flow
-
-    client_config = get_google_client_config()
-    if not client_config:
-        raise HTTPException(
-            500,
-            "Google OAuth credentials are not configured on the server. "
-            "Please set GOOGLE_CLIENT_SECRET_JSON environment variable or provide credentials.json file."
-        )
-
-    redirect_uri = _get_redirect_uri(request)
-
-    if isinstance(client_config, dict):
-        return Flow.from_client_config(
-            client_config,
-            scopes=GOOGLE_SCOPES,
-            redirect_uri=redirect_uri
-        )
-    else:
-        return Flow.from_client_secrets_file(
-            client_config,
-            scopes=GOOGLE_SCOPES,
-            redirect_uri=redirect_uri
-        )
-
-
 def _fetch_image_bytes(photo: dict) -> bytes:
-    """Retrieves original image bytes dynamically from Google Drive in memory."""
-    source_id = photo["source_id"]
-    
-    # Retrieve the source's resourcekey from the database
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT resourcekey FROM job_sources WHERE id = ?", (source_id,)).fetchone()
-        resourcekey = row["resourcekey"] if row else None
-        
-    from app.drive_service import fetch_file_bytes, get_drive_service
-    token_json = db.get_oauth_token(photo["job_id"])
-    service = get_drive_service(token_json)
-    return fetch_file_bytes(service, photo["drive_file_id"], resourcekey)
+    """Retrieves original image bytes dynamically from local job storage or Google Drive via API key."""
+    # 1. Check if stored on disk via storage_path
+    storage_path = photo.get("storage_path")
+    if storage_path and os.path.exists(storage_path):
+        with open(storage_path, "rb") as f:
+            return f.read()
+
+    # 2. Check in DATA_DIR / images / {job_id} /
+    job_dir = DATA_DIR / "images" / str(photo["job_id"])
+    candidate_id = job_dir / f"{photo['drive_file_id']}_{photo['filename']}"
+    if candidate_id.exists():
+        with open(candidate_id, "rb") as f:
+            return f.read()
+
+    candidate_direct_id = job_dir / photo["drive_file_id"]
+    if candidate_direct_id.exists():
+        with open(candidate_direct_id, "rb") as f:
+            return f.read()
+
+    candidate_name = job_dir / photo["filename"]
+    if candidate_name.exists():
+        with open(candidate_name, "rb") as f:
+            return f.read()
+
+    # 3. Fallback: Fetch directly from Google Drive using server API key
+    source_id = photo.get("source_id")
+    resourcekey = None
+    if source_id and source_id > 0:
+        with db.get_conn() as conn:
+            row = conn.execute("SELECT resourcekey FROM job_sources WHERE id = ?", (source_id,)).fetchone()
+            resourcekey = row["resourcekey"] if row else None
+            
+    try:
+        from app.drive_service import fetch_file_bytes, get_drive_service
+        service = get_drive_service()
+        file_bytes = fetch_file_bytes(service, photo["drive_file_id"], resourcekey)
+        return file_bytes
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch image bytes for photo ID {photo['id']}: {e}")
+
+    raise HTTPException(404, f"Photo image file for ID {photo['id']} not found.")
 
 
 def _stream_zip(photos: list[dict]):
@@ -136,6 +123,10 @@ def _stream_zip(photos: list[dict]):
 
 @app.post("/api/process")
 def process_folder(req: ProcessRequest):
+    """
+    Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
+    Requires no OAuth or user login.
+    """
     # Validate folder_links
     if req.folder_links is None:
         raise HTTPException(400, "folder_links is required")
@@ -166,83 +157,6 @@ def process_folder(req: ProcessRequest):
     
     return {"job_id": public_token}
 
-
-@app.post("/api/oauth/initiate")
-def initiate_oauth(req: ProcessRequest, request: Request):
-    # Validate folder_links
-    if req.folder_links is None:
-        raise HTTPException(400, "folder_links is required")
-    if len(req.folder_links) == 0:
-        raise HTTPException(400, "At least one non-empty folder link must be provided")
-        
-    links = [lnk.strip() for lnk in req.folder_links]
-    for l in links:
-        if not l:
-            raise HTTPException(400, "Blank links are not allowed")
-            
-    if len(links) != len(set(links)):
-        raise HTTPException(400, "Duplicate folder links are not allowed")
-        
-    # Create job
-    job_id, public_token = db.create_job()
-    for link in links:
-        db.create_job_source(job_id, link)
-        
-    flow = _create_oauth_flow(request)
-    
-    state = secrets.token_urlsafe(16)
-    db.save_oauth_state(state, public_token)
-    
-    authorization_url, _ = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        state=state,
-        prompt='consent'
-    )
-    
-    return {"auth_url": authorization_url, "public_job_token": public_token}
-
-
-@app.get("/api/oauth/callback")
-def oauth_callback(request: Request, code: str = Query(...), state: str = Query(...)):    
-    public_token = db.pop_oauth_state(state)
-    if not public_token:
-        raise HTTPException(400, "Invalid or expired state token.")
-        
-    job = db.get_job_by_token(public_token)
-    if not job:
-        raise HTTPException(404, "Job not found.")
-        
-    flow = _create_oauth_flow(request)
-    
-    try:
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
-        db.save_oauth_token(job["id"], credentials.to_json())
-    except Exception as e:
-        raise HTTPException(500, f"Token exchange failed: {e}")
-        
-    return RedirectResponse(f"/?job={public_token}&auth=success")
-
-
-@app.post("/api/process/start")
-def start_processing_job(req: StartProcessRequest):
-    job = db.get_job_by_token(req.public_job_token)
-    if not job:
-        raise HTTPException(404, "Job not found")
-        
-    token_json = db.get_oauth_token(job["id"])
-    if not token_json:
-        raise HTTPException(400, "Job is not authorized. Please connect your Google account.")
-        
-    sources = db.get_sources_for_job(job["id"])
-    links = [s["raw_link"] for s in sources]
-    
-    if job["status"] not in ("connecting", "listing", "downloading", "detecting", "clustering"):
-        thread = threading.Thread(target=run_job, args=(job["id"], links), daemon=True)
-        thread.start()
-        
-    return {"status": "started"}
 
 
 
@@ -500,14 +414,6 @@ def privacy_policy():
         a:hover {
             text-decoration: underline;
         }
-        .highlight-box {
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-left: 4px solid var(--accent);
-            padding: 16px 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-        }
         .meta-date {
             color: var(--ink-dim);
             font-size: 0.9rem;
@@ -526,60 +432,32 @@ def privacy_policy():
     <div class="meta-date"><strong>Last updated:</strong> August 30, 2026</div>
 
     <p>
-        <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>) is a web application designed to help users organize and cluster photos from Google Drive based on detected faces.
+        <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>) is a privacy-conscious web application designed to help users organize and cluster photos from Google Drive based on detected faces.
     </p>
 
-    <h2>1. Information We Access via Google OAuth</h2>
+    <h2>1. Information We Access</h2>
     <p>
-        When you choose to connect your Google account, Photo Clustering requests the following read-only OAuth permission:
+        Photo Clustering accesses <strong>only publicly shared Google Drive folders</strong> ("Anyone with the link &rarr; Viewer") that you submit. We do <strong>not</strong> require you to sign in with a Google account, and we never request or store personal Google OAuth tokens or login credentials.
     </p>
-    <ul>
-        <li><code>https://www.googleapis.com/auth/drive.readonly</code>: Used strictly to read image files and folder metadata (such as file names, IDs, and MIME types) from the Google Drive folders you provide.</li>
-    </ul>
 
-    <h2>2. How We Use and Process Your Data</h2>
+    <h2>2. How We Process and Use Your Photos</h2>
     <p>
-        Our application uses Google Drive data solely to perform facial detection, feature extraction, and clustering for your requested session:
+        Photos in submitted public folders are processed strictly to detect faces, compute mathematical facial embeddings, and group photos containing the same person:
     </p>
     <ul>
-        <li><strong>In-Memory Processing:</strong> Photos are downloaded into transient memory buffers, analyzed for face embeddings, and clustered. Original photos are not permanently stored on our application servers or database disks.</li>
-        <li><strong>Transient Job Tokens:</strong> A session-isolated job token allows you to review clustered face groups and stream original photos or ZIP archives directly during your session.</li>
+        <li><strong>Session Isolation:</strong> Each processing session is assigned an opaque, cryptographically random job token that prevents other users from accessing or viewing your photos or clustering results.</li>
+        <li><strong>Transient Processing:</strong> Facial detection and embeddings are computed during your session. Photos are cached in isolated transient storage solely to generate thumbnails and allow you to download organized groups.</li>
+        <li><strong>No Model Training:</strong> Your photos and facial embeddings are never used to train generalized artificial intelligence or machine learning models.</li>
     </ul>
 
-    <div class="highlight-box">
-        <h3 style="color: var(--accent); margin-bottom: 8px;">Google API Services User Data Policy Compliance</h3>
-        <p style="margin-bottom: 0;">
-            Photo Clustering's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements.
-        </p>
-    </div>
-
-    <h2>3. Data Sharing, Selling, and Disclosure</h2>
+    <h2>3. Data Sharing and Third Parties</h2>
     <p>
-        We value your privacy:
-    </p>
-    <ul>
-        <li>We <strong>do not sell</strong> user data or photos to third parties.</li>
-        <li>We <strong>do not share</strong> your photos or personal information with advertisers or data brokers.</li>
-        <li>We <strong>do not use</strong> your photos or facial embeddings to train generalized artificial intelligence models.</li>
-    </ul>
-
-    <h2>4. Data Retention and Security</h2>
-    <p>
-        We employ reasonable security safeguards to protect your session. Authorization tokens are stored in isolated per-job database records and are used exclusively to fulfill your clustering requests. No photos are retained permanently on disk.
+        We do not sell, rent, monetize, or disclose your photos, metadata, or clustering results to any third party, advertiser, or data broker.
     </p>
 
-    <h2>5. User Control and Data Deletion</h2>
+    <h2>4. Contact Us</h2>
     <p>
-        You maintain complete control over your Google account permissions at all times:
-    </p>
-    <ul>
-        <li>You can revoke Photo Clustering's access to your Google Drive at any time via your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account Security Permissions</a> page.</li>
-        <li>You can request deletion of any session data or records associated with your use of the service by contacting us at the email below.</li>
-    </ul>
-
-    <h2>6. Contact Us</h2>
-    <p>
-        If you have questions about this Privacy Policy, your data, or our compliance with Google API policies, please contact:
+        If you have any questions or privacy concerns regarding Photo Clustering, please contact:
     </p>
     <p>
         <strong>Email:</strong> <a href="mailto:poorani24official@gmail.com">poorani24official@gmail.com</a>
@@ -665,35 +543,30 @@ def terms_of_service():
 
     <h2>1. Acceptance of Terms</h2>
     <p>
-        By accessing or using <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the service.
+        By accessing or using <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>), you agree to these Terms of Service. If you do not agree to these terms, please do not use the service.
     </p>
 
     <h2>2. Description of Service</h2>
     <p>
-        Photo Clustering provides tools to analyze images stored in your Google Drive, detect faces, cluster them by individual, and enable previewing and downloading organized photo groups.
+        Photo Clustering provides automated tools to analyze images in publicly accessible Google Drive folders, detect faces, cluster photos by individual, and enable previewing and downloading organized photo groups.
     </p>
 
-    <h2>3. User Responsibilities & Google Drive Content</h2>
+    <h2>3. User Responsibilities</h2>
     <p>
-        You are solely responsible for any Google Drive folders and image files you submit for processing. You represent and warrant that you have all necessary rights, licenses, and permissions to access and process the images you provide.
+        You are solely responsible for ensuring that any Google Drive folder you submit is appropriately configured with "Anyone with the link &rarr; Viewer" permissions and that you possess all necessary rights to process the photos.
     </p>
 
     <h2>4. Acceptable Use</h2>
     <p>
-        You agree not to misuse the service, attempt unauthorized access to our systems, or use the service for any unlawful or harmful purposes.
+        You agree not to misuse the service, upload malicious software or unlawful materials, or attempt unauthorized access to other sessions or backend systems.
     </p>
 
     <h2>5. Disclaimer of Warranties & Limitation of Liability</h2>
     <p>
-        Photo Clustering is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind, whether express or implied. We do not guarantee that the service will be uninterrupted, error-free, or entirely accurate in facial recognition results.
+        Photo Clustering is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind. We do not guarantee uninterrupted availability or flawless facial recognition accuracy.
     </p>
 
-    <h2>6. Changes to Terms</h2>
-    <p>
-        We reserve the right to update these terms at any time. Changes will be posted on this page with an updated revision date.
-    </p>
-
-    <h2>7. Contact Information</h2>
+    <h2>6. Contact Information</h2>
     <p>
         For inquiries regarding these Terms of Service, please contact:
     </p>
@@ -706,5 +579,16 @@ def terms_of_service():
 
 
 
-# Serve frontend static assets last
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    """Custom StaticFiles handler ensuring browsers always receive fresh JS and CSS."""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
+# Serve frontend static assets with no-cache headers
+app.mount("/", NoCacheStaticFiles(directory="static", html=True), name="static")
+

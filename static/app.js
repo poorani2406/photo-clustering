@@ -46,8 +46,8 @@ let selectedPhotoIds = new Set();
 const STATUS_PROGRESS = {
   pending: 5,
   connecting: 10,
-  listing: 15,
-  downloading: 25,
+  listing: 20,
+  downloading: 35,
   detecting: 70,
   clustering: 90,
   done: 100,
@@ -59,7 +59,7 @@ function createFolderInputRow(value = "") {
   const row = document.createElement("div");
   row.className = "folder-input-row";
   row.innerHTML = `
-    <input type="text" class="folder-link-input" placeholder="Paste Google Drive folder URL or ID" value="${value}" autocomplete="off" />
+    <input type="text" class="folder-link-input" placeholder="Paste Google Drive folder URL or ID (shared as Anyone with the link \u2192 Viewer)" value="${value}" autocomplete="off" />
     <button class="remove-folder-btn" type="button" aria-label="Remove input">&times;</button>
   `;
   
@@ -76,8 +76,10 @@ function createFolderInputRow(value = "") {
   return row;
 }
 
-// Append initial row
+// Initialize single initial row
+foldersContainer.innerHTML = "";
 foldersContainer.appendChild(createFolderInputRow());
+
 
 addFolderBtn.addEventListener("click", () => {
   foldersContainer.appendChild(createFolderInputRow());
@@ -98,10 +100,8 @@ function resetToHome() {
   // Re-enable form controls
   processBtn.disabled = false;
   addFolderBtn.disabled = false;
-
-  // Re-enable folder link inputs & clear them
-  foldersContainer.innerHTML = "";
-  foldersContainer.appendChild(createFolderInputRow());
+  document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
+  document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
 
   // Reset statuses & counters
   statusFill.style.width = "5%";
@@ -151,6 +151,7 @@ async function startProcessing() {
 
   if (folderLinks.length === 0) {
     if (inputs[0]) inputs[0].focus();
+    alert("Please paste a Google Drive folder link or folder ID.");
     return;
   }
 
@@ -175,8 +176,8 @@ async function startProcessing() {
 
   statusLine.hidden = false;
   statusText.classList.remove("error");
-  statusText.textContent = "Redirecting to Google Auth...";
-  statusFill.style.width = "5%";
+  statusText.textContent = "Connecting to Google Drive...";
+  statusFill.style.width = "10%";
   
   // Clear statistics counters
   statDiscovered.textContent = "0";
@@ -185,14 +186,15 @@ async function startProcessing() {
   statFaces.textContent = "0";
 
   try {
-    const res = await fetch("/api/oauth/initiate", {
+    const res = await fetch("/api/process", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folder_links: folderLinks }),
     });
 
     if (!res.ok) {
-      statusText.textContent = "Couldn't initiate Google authentication. Check the server logs.";
+      const err = await res.json().catch(() => ({ detail: "Failed to initiate processing." }));
+      statusText.textContent = err.detail || "Couldn't initiate processing. Check the server logs.";
       statusText.classList.add("error");
       processBtn.disabled = false;
       addFolderBtn.disabled = false;
@@ -201,8 +203,9 @@ async function startProcessing() {
       return;
     }
 
-    const { auth_url } = await res.json();
-    window.location.href = auth_url;
+    const data = await res.json();
+    currentJobId = data.job_id;
+    pollJob();
   } catch (err) {
     console.error(err);
     statusText.textContent = "Error connecting to the server.";
@@ -214,55 +217,6 @@ async function startProcessing() {
   }
 }
 
-// --- URL Parameter Parsing & Page Load Handler ---
-window.addEventListener("DOMContentLoaded", async () => {
-  const params = new URLSearchParams(window.location.search);
-  const jobToken = params.get("job");
-  const authSuccess = params.get("auth");
-
-  if (jobToken && authSuccess === "success") {
-    // Clear URL parameters to keep address bar clean
-    window.history.replaceState({}, document.title, window.location.pathname);
-
-    currentJobId = jobToken; // Compatibility helper: currentJobId = job_id;
-    
-    // Hide controls, show statusLine
-    processBtn.disabled = true;
-    addFolderBtn.disabled = true;
-    document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = true);
-    document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = true);
-    statusLine.hidden = false;
-    statusText.textContent = "Starting process...";
-    statusFill.style.width = "5%";
-
-    // Trigger processing start on the backend
-    try {
-      const res = await fetch("/api/process/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ public_job_token: currentJobId })
-      });
-      if (res.ok) {
-        pollJob();
-      } else {
-        statusText.textContent = "Failed to start processing.";
-        statusText.classList.add("error");
-        processBtn.disabled = false;
-        addFolderBtn.disabled = false;
-        document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
-        document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
-      }
-    } catch (e) {
-      console.error(e);
-      statusText.textContent = "Error initiating processing.";
-      statusText.classList.add("error");
-      processBtn.disabled = false;
-      addFolderBtn.disabled = false;
-      document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
-      document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
-    }
-  }
-});
 
 function pollJob() {
   clearTimeout(pollHandle);
@@ -299,8 +253,13 @@ function pollJob() {
       }
 
       pollHandle = setTimeout(pollJob, 1200);
+    })
+    .catch((e) => {
+      console.error(e);
+      pollHandle = setTimeout(pollJob, 2000);
     });
 }
+
 
 async function showCompletionPanel(job) {
   const people = await fetch(`/api/jobs/${currentJobId}/people`).then((r) => r.json());

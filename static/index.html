@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Photo Clustering &mdash; Face Grouping & Organization</title>
+<title>Photo Clustering &mdash; Group Photos by Face</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=IBM+Plex+Mono:wght@300;400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/style.css?v=2.0" />
+
 </head>
 <body>
 
@@ -16,7 +17,7 @@
   <div class="header-inner">
     <div>
       <h1 class="wordmark">Photo Clustering<span class="wordmark-accent">.</span></h1>
-      <p class="tagline">Automated Face Detection, Grouping & Secure Streaming</p>
+      <p class="tagline">Enter a Google Drive folder link (shared as <strong>Anyone with the link &rarr; Viewer</strong>) and Photo Clustering will group photos containing the same person.</p>
     </div>
     <nav class="header-nav">
       <a href="/privacy" class="header-nav-link">Privacy Policy</a>
@@ -34,35 +35,39 @@
     <div class="workflow-grid">
       <div class="workflow-card">
         <div class="workflow-step-badge">1</div>
-        <h3>Provide Drive Link</h3>
-        <p>Paste one or multiple Google Drive folder links containing your photos.</p>
+        <h3>Paste Drive Link</h3>
+        <p>Enter one or multiple Google Drive folder links shared as <strong>Anyone with the link &rarr; Viewer</strong>.</p>
       </div>
       <div class="workflow-card">
         <div class="workflow-step-badge">2</div>
-        <h3>Authorize Drive Access</h3>
-        <p>Sign in with your Google account to grant temporary read-only access to your folders.</p>
+        <h3>Zero OAuth Access</h3>
+        <p>Backend connects securely via API key without requiring any Google sign-in or personal account access.</p>
       </div>
       <div class="workflow-card">
         <div class="workflow-step-badge">3</div>
-        <h3>In-Memory Clustering</h3>
-        <p>Faces are detected, embedded, and grouped in transient memory without permanent disk storage.</p>
+        <h3>Smart Clustering</h3>
+        <p>AI detects faces, extracts mathematical embeddings, and clusters photos by individual.</p>
       </div>
       <div class="workflow-card">
         <div class="workflow-step-badge">4</div>
         <h3>Explore & Download</h3>
-        <p>Browse clustered people, rename labels, and stream original photos or ZIP archives.</p>
+        <p>Browse detected people, rename tags, and stream original photos or ZIP archives.</p>
       </div>
     </div>
   </section>
 
   <!-- Processing / Loader panel -->
   <section class="loader-panel" id="loader-panel">
-    <h2 class="section-title">Analyze Drive Folders</h2>
-    <p class="section-desc">Enter one or multiple Google Drive folder links or IDs. The pipeline runs securely in transient memory without disk storage.</p>
+    <h2 class="section-title">Analyze Google Drive Folders</h2>
+    <p class="section-desc">Paste one or multiple Google Drive folder links. Make sure your folders are shared as <strong>Anyone with the link &rarr; Viewer</strong>.</p>
     
     <div id="folders-container" class="folders-container">
-      <!-- Added dynamically via JS, starting with one by default -->
+      <div class="folder-input-row">
+        <input type="text" class="folder-link-input" placeholder="Paste Google Drive folder URL or ID (shared as Anyone with the link &rarr; Viewer)" autocomplete="off" />
+        <button class="remove-folder-btn" type="button" aria-label="Remove input">&times;</button>
+      </div>
     </div>
+
     
     <div class="loader-controls">
       <button id="add-folder-btn" class="btn-secondary" type="button">+ Add another folder</button>
@@ -72,7 +77,7 @@
     <div id="status-line" class="status-line" hidden>
       <div class="status-bar"><div class="status-bar-fill" id="status-fill"></div></div>
       
-      <!-- Premium Stats Panel -->
+      <!-- Live Stats Deck -->
       <div class="stats-deck" id="stats-deck">
         <div class="stat-card">
           <span class="stat-val" id="stat-discovered">0</span>
@@ -101,7 +106,7 @@
     <div style="text-align: center; margin-bottom: 24px;">
       <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(102, 252, 241, 0.1); color: var(--accent); font-size: 2rem; font-weight: 700; margin-bottom: 16px;">✓</div>
       <h2 class="section-title">Analysis Complete</h2>
-      <p class="section-desc">Google Drive folders processed. Face grouping completed in-memory.</p>
+      <p class="section-desc">Google Drive folders processed. Face grouping completed.</p>
     </div>
     
     <!-- Final Stats Panel -->
@@ -134,11 +139,12 @@
     </div>
   </section>
 
+
   <!-- People / Results panel -->
   <section id="people-view" class="people-view" hidden>
     <div class="section-heading">
       <h2>People found <span id="people-count" class="frame-count"></span></h2>
-      <button id="back-to-home" class="btn-secondary">&larr; Back to Home</button>
+      <button id="back-to-home" class="btn-secondary">&larr; Back to Upload</button>
     </div>
     <div id="people-grid" class="people-grid"></div>
   </section>
@@ -183,12 +189,10 @@
       <span class="footer-separator">&bull;</span>
       <a href="mailto:poorani24official@gmail.com">Contact Support</a>
     </div>
-    <div class="footer-disclaimer">
-      Google Drive&trade; is a trademark of Google LLC. Photo Clustering adheres to the Google API Services User Data Policy, including the Limited Use requirements.
-    </div>
   </div>
 </footer>
 
-<script src="/app.js"></script>
+<script src="/app.js?v=2.0"></script>
 </body>
 </html>
+

@@ -1,6 +1,6 @@
 """
 Handles everything related to talking to Google Drive using API key access:
-- Listing every image in a given folder
+- Listing every image in a given publicly shared folder
 - Downloading a file's bytes to memory
 """
 import io
@@ -11,17 +11,12 @@ from enum import Enum
 from typing import NamedTuple, Optional
 from urllib.parse import urlparse, parse_qs
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
 from app.config import (
-    GOOGLE_CREDENTIALS_FILE,
-    GOOGLE_TOKEN_FILE,
-    GOOGLE_SCOPES,
+    GOOGLE_DRIVE_API_KEY,
     IMAGE_MIME_TYPES,
 )
 
@@ -124,7 +119,7 @@ def classify_drive_error(exception: HttpError) -> DriveErrorCategory:
     # 3. Not found or private
     if (
         status == 404
-        or reason in ("permissionDenied", "accessNotConfigured")
+        or reason in ("permissionDenied", "accessNotConfigured", "notFound", "fileNotFound")
         or "permission" in message.lower()
         or "not found" in message.lower()
         or status == 403
@@ -135,34 +130,15 @@ def classify_drive_error(exception: HttpError) -> DriveErrorCategory:
     return DriveErrorCategory.API_ERROR
 
 
-def get_drive_service(token_json: Optional[str] = None):
-    """Returns an authenticated Drive API client using OAuth 2.0 credentials."""
-    creds = None
-    
-    # 1. If in-memory token string is supplied for this job, load from it directly
-    if token_json:
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(token_json), GOOGLE_SCOPES)
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            return build("drive", "v3", credentials=creds)
-        except Exception as e:
-            print(f"[ERROR] Failed to load OAuth credentials from token_json: {e}")
-            raise RuntimeError(f"Invalid OAuth session credentials: {e}")
-            
-    # 2. Otherwise, fall back to local token file for local development/testing
-    if os.path.exists(GOOGLE_TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPES)
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            if creds and creds.valid:
-                return build("drive", "v3", credentials=creds)
-        except Exception as e:
-            print(f"[WARNING] Failed to load token file {GOOGLE_TOKEN_FILE}: {e}")
-
-    raise RuntimeError("No OAuth authorization token found for this job. Authorization via Google OAuth is required.")
-
+def get_drive_service(api_key: Optional[str] = None):
+    """Returns a Google Drive API client using a backend API key for public folder access."""
+    key = api_key or os.getenv("GOOGLE_DRIVE_API_KEY") or GOOGLE_DRIVE_API_KEY
+    if not key or not key.strip():
+        raise RuntimeError(
+            "GOOGLE_DRIVE_API_KEY environment variable is not configured on the server. "
+            "Please set GOOGLE_DRIVE_API_KEY to access publicly shared Google Drive folders."
+        )
+    return build("drive", "v3", developerKey=key.strip())
 
 
 def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = None) -> list:
@@ -179,6 +155,8 @@ def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = 
                 fields="nextPageToken, files(id, name, mimeType)",
                 pageToken=page_token,
                 pageSize=1000,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
             )
             if resourcekey:
                 request.headers["X-Goog-Drive-Resource-Keys"] = f"{folder_id}/{resourcekey}"
@@ -205,7 +183,7 @@ def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = 
 def fetch_file_bytes(service, file_id: str, resourcekey: Optional[str] = None) -> bytes:
     """Downloads a Drive file's bytes completely to memory (returns bytes)."""
     try:
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
         if resourcekey:
             request.headers["X-Goog-Drive-Resource-Keys"] = f"{file_id}/{resourcekey}"
         
@@ -222,3 +200,4 @@ def fetch_file_bytes(service, file_id: str, resourcekey: Optional[str] = None) -
             f"Failed to fetch file {file_id}: {e}",
             original_error=e
         )
+

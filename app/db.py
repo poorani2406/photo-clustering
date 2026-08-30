@@ -32,16 +32,16 @@ CREATE TABLE IF NOT EXISTS job_sources (
 CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
-    source_id INTEGER NOT NULL,
+    source_id INTEGER DEFAULT 0,
     drive_file_id TEXT NOT NULL,
     filename TEXT NOT NULL,
     mime_type TEXT,
     size_bytes INTEGER,
     content_hash TEXT,
     face_count INTEGER DEFAULT 0,
+    storage_path TEXT,
     UNIQUE(job_id, drive_file_id),
-    FOREIGN KEY(job_id) REFERENCES jobs(id),
-    FOREIGN KEY(source_id) REFERENCES job_sources(id)
+    FOREIGN KEY(job_id) REFERENCES jobs(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_photos_job_content_hash ON photos(job_id, content_hash);
@@ -176,27 +176,18 @@ def init_db():
                 conn.execute("ALTER TABLE jobs ADD COLUMN oauth_token TEXT;")
                 print("[MIGRATION] oauth_token column added successfully.")
             
-        # Also check if photos table is missing content_hash
+        # Also check if photos table is missing content_hash or storage_path
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='photos'")
         has_photos = cursor.fetchone()
         if has_photos:
             cursor = conn.execute("PRAGMA table_info(photos)")
             columns = [row["name"] for row in cursor.fetchall()]
             if "content_hash" not in columns:
-                print("[MIGRATION] photos table is missing content_hash. Migrating photos table...")
-                conn.execute("PRAGMA foreign_keys = OFF;")
-                conn.execute("ALTER TABLE photos RENAME TO photos_old;")
-                conn.executescript(SCHEMA)
-                conn.execute(
-                    """
-                    INSERT INTO photos (id, job_id, source_id, drive_file_id, filename, mime_type, size_bytes, face_count, content_hash)
-                    SELECT id, job_id, source_id, drive_file_id, filename, mime_type, size_bytes, face_count, NULL
-                    FROM photos_old;
-                    """
-                )
-                conn.execute("DROP TABLE photos_old;")
-                conn.execute("PRAGMA foreign_keys = ON;")
-                print("[MIGRATION] photos table migration completed successfully.")
+                print("[MIGRATION] photos table is missing content_hash. Adding column...")
+                conn.execute("ALTER TABLE photos ADD COLUMN content_hash TEXT;")
+            if "storage_path" not in columns:
+                print("[MIGRATION] photos table is missing storage_path. Adding column...")
+                conn.execute("ALTER TABLE photos ADD COLUMN storage_path TEXT;")
                 
         # Ensure all tables (including any new ones like oauth_pending_states) are created
         conn.executescript(SCHEMA)
@@ -262,19 +253,21 @@ def get_sources_for_job(job_id: int) -> list[dict]:
 
 # ---------- photos ----------
 
-def insert_photo(job_id: int, source_id: int, drive_file_id: str, filename: str, mime_type: str = None, size_bytes: int = None, content_hash: str = None) -> int:
+def insert_photo(job_id: int, source_id: int = 0, drive_file_id: str = "", filename: str = "", mime_type: str = None, size_bytes: int = None, content_hash: str = None, storage_path: str = None) -> int:
+    file_identifier = drive_file_id or filename
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO photos (job_id, source_id, drive_file_id, filename, mime_type, size_bytes, content_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (job_id, source_id, drive_file_id, filename, mime_type, size_bytes, content_hash),
+            "INSERT OR IGNORE INTO photos (job_id, source_id, drive_file_id, filename, mime_type, size_bytes, content_hash, storage_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (job_id, source_id, file_identifier, filename, mime_type, size_bytes, content_hash, storage_path),
         )
         if cur.lastrowid:
             return cur.lastrowid
         row = conn.execute(
-            "SELECT id FROM photos WHERE job_id = ? AND drive_file_id = ?", (job_id, drive_file_id)
+            "SELECT id FROM photos WHERE job_id = ? AND drive_file_id = ?", (job_id, file_identifier)
         ).fetchone()
         return row["id"]
+
 
 
 def set_photo_face_count(photo_id: int, count: int):
