@@ -43,6 +43,7 @@ import insightface.utils.storage as storage
 if hasattr(storage, "BASE_REPO_URL") and storage.BASE_REPO_URL.endswith("/v0.7"):
     storage.BASE_REPO_URL = storage.BASE_REPO_URL[:-5]
 
+from app.config import BASE_DIR
 from app.face_engine.base import FaceEngine
 
 
@@ -59,14 +60,21 @@ class InsightFaceEngine(FaceEngine):
         print(f"[FACE ENGINE] Starting initialization (model: {model_name}, ctx_id: {ctx_id}, det_size: {det_size})...")
         print(f"[FACE ENGINE] Creating FaceAnalysis instance for CPU (model: {model_name}, modules: detection, recognition)...")
         
+        # Check if model is bundled locally in repository
+        local_model_path = BASE_DIR / "models" / model_name
+        models_root = str(BASE_DIR) if local_model_path.exists() else os.path.expanduser("~/.insightface")
+        print(f"[FACE ENGINE] Using models directory root: {models_root}")
+
         # Explicitly configure CPU execution provider without searching for CUDA
         self._app = FaceAnalysis(
             name=model_name,
+            root=models_root,
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"]
         )
-        print("[FACE ENGINE] FaceAnalysis created. Preparing model (downloading/loading from cache)...")
+        print("[FACE ENGINE] FaceAnalysis created. Preparing model...")
         self._app.prepare(ctx_id=-1, det_size=det_size)
+
         print("[FACE ENGINE] Model preparation completed. Running first test inference warmup...")
         # First test inference warmup on dummy image
         dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
