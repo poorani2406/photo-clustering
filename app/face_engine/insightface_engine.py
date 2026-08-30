@@ -40,15 +40,22 @@ class InsightFaceEngine(FaceEngine):
         ctx_id: -1 for CPU execution.
         allowed_modules: loads only detection + recognition (ArcFace), skipping unused 3D/landmark/genderage models.
         """
-        print(f"[FACE ENGINE] Initializing InsightFace on CPU (modules: detection, recognition, det_size: {det_size})...")
+        print(f"[FACE ENGINE] Starting initialization (model: {model_name}, ctx_id: {ctx_id}, det_size: {det_size})...")
+        print("[FACE ENGINE] Creating FaceAnalysis instance for CPU (modules: detection, recognition)...")
         # Explicitly configure CPU execution provider without searching for CUDA
         self._app = FaceAnalysis(
             name=model_name,
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"]
         )
+        print("[FACE ENGINE] FaceAnalysis created. Preparing model (downloading/loading from cache)...")
         self._app.prepare(ctx_id=-1, det_size=det_size)
-        print("[FACE ENGINE] InsightFace CPU engine pre-warmed and ready.")
+        print("[FACE ENGINE] Model preparation completed. Running first test inference warmup...")
+        # First test inference warmup on dummy image
+        dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        self._app.get(dummy_img)
+        print("[FACE ENGINE] Face engine ready and pre-warmed.")
+
 
     def detect_faces(self, image_bytes: bytes) -> list[dict]:
         import cv2

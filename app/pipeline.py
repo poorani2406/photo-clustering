@@ -180,15 +180,26 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
 
 def run_job(job_id: int, folder_links: list[str]):
     print(f"[WORKER START] job_id={job_id} starting processing for {len(folder_links)} folder link(s)")
-    face_engine = get_face_engine()
     try:
-        db.update_job(job_id, status="connecting", message="Connecting to Google Drive...")
-        
+        # 1. Immediately transition out of 'pending'
+        db.update_job(job_id, status="connecting", message="Connecting to Google Drive and initializing face engine...")
+
+        # 2. Initialize Drive service
         try:
             service = get_drive_service()
         except Exception as e:
             err_msg = str(e)
             print(f"[WORKER EXCEPTION] job_id={job_id} drive_service_init_error={err_msg}")
+            db.update_job(job_id, status="error", message=err_msg)
+            return
+
+        # 3. Initialize Face Engine inside try block
+        try:
+            face_engine = get_face_engine()
+        except Exception as e:
+            err_msg = f"Failed to initialize Face Engine: {e}"
+            print(f"[WORKER EXCEPTION] job_id={job_id} face_engine_init_error={err_msg}")
+            traceback.print_exc()
             db.update_job(job_id, status="error", message=err_msg)
             return
 
@@ -282,6 +293,14 @@ def run_job(job_id: int, folder_links: list[str]):
         db.update_job(job_id, status="error", message=err_msg)
         print(f"[JOB COMPLETE] job_id={job_id} status=error err={err_msg}")
         traceback.print_exc()
+    except BaseException as be:
+        err_msg = f"Fatal worker error ({type(be).__name__}): {be}"
+        print(f"[WORKER FATAL EXCEPTION] job_id={job_id} error={err_msg}")
+        db.update_job(job_id, status="error", message=err_msg)
+        print(f"[JOB COMPLETE] job_id={job_id} status=error err={err_msg}")
+        traceback.print_exc()
+        raise
+
 
 
 

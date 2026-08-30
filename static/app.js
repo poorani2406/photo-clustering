@@ -50,9 +50,13 @@ const STATUS_PROGRESS = {
   downloading: 35,
   detecting: 70,
   clustering: 90,
+  processing: 50,
   done: 100,
+  completed: 100,
   error: 100,
+  failed: 100,
 };
+
 
 // --- Multiple folders input management ---
 function createFolderInputRow(value = "") {
@@ -245,7 +249,7 @@ async function pollJob() {
     statProcessed.textContent = job.processed_files || 0;
     statFaces.textContent = job.faces_count || 0;
 
-    if (job.status === "error") {
+    if (job.status === "error" || job.status === "failed") {
       statusText.classList.add("error");
       processBtn.disabled = false;
       addFolderBtn.disabled = false;
@@ -254,7 +258,7 @@ async function pollJob() {
       return;
     }
 
-    if (job.status === "done") {
+    if (job.status === "done" || job.status === "completed") {
       processBtn.disabled = false;
       addFolderBtn.disabled = false;
       document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
@@ -262,6 +266,7 @@ async function pollJob() {
       showCompletionPanel(job);
       return;
     }
+
 
     pollHandle = setTimeout(pollJob, 1200);
   } catch (err) {

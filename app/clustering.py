@@ -64,10 +64,31 @@ def cluster_faces(face_rows: list[dict]) -> dict[int, int]:
         return {}
 
     ids = [f["id"] for f in face_rows]
-    embeddings = np.array(
-        [np.frombuffer(f["embedding"], dtype=np.float64) for f in face_rows]
-    )
+    parsed_embeddings = []
+    for f in face_rows:
+        raw_b = f["embedding"]
+        if isinstance(raw_b, memoryview):
+            raw_b = raw_b.tobytes()
+        elif isinstance(raw_b, np.ndarray):
+            parsed_embeddings.append(raw_b.astype(np.float32))
+            continue
+            
+        if len(raw_b) == 2048:  # 512 float32
+            arr = np.frombuffer(raw_b, dtype=np.float32).copy()
+        elif len(raw_b) == 4096:  # 512 float64
+            arr = np.frombuffer(raw_b, dtype=np.float64).astype(np.float32)
+        else:
+            arr = np.frombuffer(raw_b, dtype=np.float32).copy()
+            
+        # Ensure L2 unit-norm
+        norm = np.linalg.norm(arr)
+        if norm > 0:
+            arr = arr / norm
+        parsed_embeddings.append(arr)
+
+    embeddings = np.array(parsed_embeddings, dtype=np.float32)
     print(f"[DEBUG] [cluster_faces] Formed embeddings array with shape {embeddings.shape}.")
+
 
     # Print embedding details for verification
     print("\n=== EMBEDDING DETAILS VERIFICATION ===")

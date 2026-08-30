@@ -28,6 +28,14 @@ db.init_db()
 print("[PROCESS STARTUP] Photo Clustering FastAPI application loaded and ready.")
 
 
+@app.on_event("startup")
+def startup_event():
+    print("[PROCESS STARTUP] Initiating background pre-warming of InsightFace CPU engine...")
+    from app.face_engine import get_face_engine
+    threading.Thread(target=get_face_engine, daemon=True).start()
+
+
+
 
 class ProcessRequest(BaseModel):
     folder_links: list[str]
