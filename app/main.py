@@ -34,6 +34,20 @@ def health_check():
     return JSONResponse({"status": "ok", "app": "Photo Clustering"})
 
 
+@app.get("/api/debug/info")
+def debug_info():
+    with db.get_conn() as conn:
+        jobs = [dict(r) for r in conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 10").fetchall()]
+    return {
+        "env": os.environ.get("ENV", "production"),
+        "has_google_api_key": bool(os.environ.get("GOOGLE_DRIVE_API_KEY")),
+        "model_name": os.environ.get("INSIGHTFACE_MODEL", "buffalo_s"),
+        "models_bundled": (BASE_DIR / "models" / "buffalo_s" / "det_500m.onnx").exists(),
+        "recent_jobs": jobs
+    }
+
+
+
 
 
 
