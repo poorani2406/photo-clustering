@@ -139,7 +139,7 @@ def get_drive_service(token_json: Optional[str] = None):
     """Returns an authenticated Drive API client using OAuth 2.0 credentials."""
     creds = None
     
-    # If in-memory token string is supplied, load from it directly
+    # 1. If in-memory token string is supplied for this job, load from it directly
     if token_json:
         try:
             creds = Credentials.from_authorized_user_info(json.loads(token_json), GOOGLE_SCOPES)
@@ -150,42 +150,19 @@ def get_drive_service(token_json: Optional[str] = None):
             print(f"[ERROR] Failed to load OAuth credentials from token_json: {e}")
             raise RuntimeError(f"Invalid OAuth session credentials: {e}")
             
-    # Otherwise, fall back to local token.json or credentials.json setup
+    # 2. Otherwise, fall back to local token file for local development/testing
     if os.path.exists(GOOGLE_TOKEN_FILE):
         try:
             creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPES)
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            if creds and creds.valid:
+                return build("drive", "v3", credentials=creds)
         except Exception as e:
             print(f"[WARNING] Failed to load token file {GOOGLE_TOKEN_FILE}: {e}")
-            
-    # 2. If token is invalid/expired, refresh it or request login
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                print(f"[WARNING] Failed to refresh token: {e}")
-                creds = None
-        
-        # 3. If refresh failed or there was no token file, trigger authorization flow
-        if not creds:
-            if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-                raise RuntimeError(
-                    f"OAuth client credentials file '{GOOGLE_CREDENTIALS_FILE}' is missing.\n"
-                    f"Please place your client secrets JSON file in the project directory as '{GOOGLE_CREDENTIALS_FILE}'."
-                )
-            
-            # Start local server to get token
-            flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDENTIALS_FILE, GOOGLE_SCOPES)
-            creds = flow.run_local_server(port=0)
-            
-            # Save token to file
-            try:
-                with open(GOOGLE_TOKEN_FILE, "w") as token_file:
-                    token_file.write(creds.to_json())
-            except Exception as e:
-                print(f"[WARNING] Failed to save token file {GOOGLE_TOKEN_FILE}: {e}")
-                
-    return build("drive", "v3", credentials=creds)
+
+    raise RuntimeError("No OAuth authorization token found for this job. Authorization via Google OAuth is required.")
+
 
 
 def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = None) -> list:

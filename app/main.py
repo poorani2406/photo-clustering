@@ -17,7 +17,7 @@ from app import db
 from app.pipeline import run_job
 
 
-app = FastAPI(title="Face Clustering - Phase 5")
+app = FastAPI(title="Photo Clustering")
 
 # Initialize/migrate database on application startup
 db.init_db()
@@ -45,6 +45,50 @@ class PersonDownloadRequest(BaseModel):
 
 
 # ---------- Helpers ----------
+
+def _get_redirect_uri(request: Request) -> str:
+    """Builds the canonical OAuth redirect URI for this server."""
+    redirect_override = os.getenv("OAUTH_REDIRECT_URI")
+    if redirect_override and redirect_override.strip():
+        return redirect_override.strip()
+
+    # Detect protocol from proxy headers (Render, Cloudflare, Nginx, etc.)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    if "onrender.com" in host or proto == "https":
+        proto = "https"
+
+    return f"{proto}://{host}/api/oauth/callback"
+
+
+def _create_oauth_flow(request: Request):
+    """Creates a Google OAuth Flow using either client JSON env var or credentials file."""
+    from app.config import get_google_client_config, GOOGLE_SCOPES
+    from google_auth_oauthlib.flow import Flow
+
+    client_config = get_google_client_config()
+    if not client_config:
+        raise HTTPException(
+            500,
+            "Google OAuth credentials are not configured on the server. "
+            "Please set GOOGLE_CLIENT_SECRET_JSON environment variable or provide credentials.json file."
+        )
+
+    redirect_uri = _get_redirect_uri(request)
+
+    if isinstance(client_config, dict):
+        return Flow.from_client_config(
+            client_config,
+            scopes=GOOGLE_SCOPES,
+            redirect_uri=redirect_uri
+        )
+    else:
+        return Flow.from_client_secrets_file(
+            client_config,
+            scopes=GOOGLE_SCOPES,
+            redirect_uri=redirect_uri
+        )
+
 
 def _fetch_image_bytes(photo: dict) -> bytes:
     """Retrieves original image bytes dynamically from Google Drive in memory."""
@@ -116,15 +160,6 @@ def process_folder(req: ProcessRequest):
     for link in links:
         db.create_job_source(job_id, link)
         
-    # For local test suites backward compatibility, copy local token.json if exists
-    from app.config import GOOGLE_TOKEN_FILE
-    if os.path.exists(GOOGLE_TOKEN_FILE):
-        try:
-            with open(GOOGLE_TOKEN_FILE, "r") as tf:
-                db.save_oauth_token(job_id, tf.read())
-        except Exception as e:
-            print(f"[WARNING] Failed to seed job with local token file: {e}")
-            
     # Start the job sequentially in a background thread
     thread = threading.Thread(target=run_job, args=(job_id, links), daemon=True)
     thread.start()
@@ -153,20 +188,7 @@ def initiate_oauth(req: ProcessRequest, request: Request):
     for link in links:
         db.create_job_source(job_id, link)
         
-    from app.config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SCOPES
-    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        raise HTTPException(500, f"Google client credentials file '{GOOGLE_CREDENTIALS_FILE}' is missing on the server.")
-        
-    redirect_uri = f"{request.url.scheme}://{request.url.netloc}/api/oauth/callback"
-    if "onrender.com" in request.url.netloc:
-        redirect_uri = f"https://{request.url.netloc}/api/oauth/callback"
-        
-    from google_auth_oauthlib.flow import Flow
-    flow = Flow.from_client_secrets_file(
-        GOOGLE_CREDENTIALS_FILE,
-        scopes=GOOGLE_SCOPES,
-        redirect_uri=redirect_uri
-    )
+    flow = _create_oauth_flow(request)
     
     state = secrets.token_urlsafe(16)
     db.save_oauth_state(state, public_token)
@@ -182,7 +204,7 @@ def initiate_oauth(req: ProcessRequest, request: Request):
 
 
 @app.get("/api/oauth/callback")
-def oauth_callback(request: Request,code: str = Query(...),state: str = Query(...),):    
+def oauth_callback(request: Request, code: str = Query(...), state: str = Query(...)):    
     public_token = db.pop_oauth_state(state)
     if not public_token:
         raise HTTPException(400, "Invalid or expired state token.")
@@ -191,17 +213,7 @@ def oauth_callback(request: Request,code: str = Query(...),state: str = Query(..
     if not job:
         raise HTTPException(404, "Job not found.")
         
-    from app.config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SCOPES
-    redirect_uri = f"{request.url.scheme}://{request.url.netloc}/api/oauth/callback"
-    if "onrender.com" in request.url.netloc:
-        redirect_uri = f"https://{request.url.netloc}/api/oauth/callback"
-        
-    from google_auth_oauthlib.flow import Flow
-    flow = Flow.from_client_secrets_file(
-        GOOGLE_CREDENTIALS_FILE,
-        scopes=GOOGLE_SCOPES,
-        redirect_uri=redirect_uri
-    )
+    flow = _create_oauth_flow(request)
     
     try:
         flow.fetch_token(code=code)
@@ -231,6 +243,7 @@ def start_processing_job(req: StartProcessRequest):
         thread.start()
         
     return {"status": "started"}
+
 
 
 @app.get("/api/jobs/{public_job_token}")
@@ -431,195 +444,264 @@ def download_person_zip(person_id: int, req: PersonDownloadRequest):
 
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_policy():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Privacy Policy - Photo Clustering</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 900px;
-                margin: 40px auto;
-                padding: 20px;
-                line-height: 1.6;
-            }
-            h1, h2 {
-                color: #222;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Privacy Policy</h1>
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Photo Clustering</title>
+    <style>
+        :root {
+            --bg: #0b0c10;
+            --panel: #1f2833;
+            --ink: #f5f5f7;
+            --ink-dim: #c5c6c7;
+            --accent: #66fcf1;
+            --line: rgba(255, 255, 255, 0.1);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--ink);
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 40px 24px;
+            line-height: 1.7;
+        }
+        h1 {
+            color: var(--accent);
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+        h2 {
+            color: var(--ink);
+            font-size: 1.3rem;
+            margin-top: 32px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 6px;
+        }
+        p, li {
+            color: var(--ink-dim);
+            margin-bottom: 14px;
+            font-size: 1rem;
+        }
+        ul {
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .highlight-box {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-left: 4px solid var(--accent);
+            padding: 16px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .meta-date {
+            color: var(--ink-dim);
+            font-size: 0.9rem;
+            margin-bottom: 24px;
+        }
+        .nav-link {
+            display: inline-block;
+            margin-bottom: 24px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="nav-link">&larr; Back to Photo Clustering</a>
+    <h1>Privacy Policy</h1>
+    <div class="meta-date"><strong>Last updated:</strong> August 30, 2026</div>
 
-        <p><strong>Last updated:</strong> August 30, 2026</p>
+    <p>
+        <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>) is a web application designed to help users organize and cluster photos from Google Drive based on detected faces.
+    </p>
 
-        <p>
-            Photo Clustering is a web application that helps users organize
-            and cluster photos based on detected faces.
+    <h2>1. Information We Access via Google OAuth</h2>
+    <p>
+        When you choose to connect your Google account, Photo Clustering requests the following read-only OAuth permission:
+    </p>
+    <ul>
+        <li><code>https://www.googleapis.com/auth/drive.readonly</code>: Used strictly to read image files and folder metadata (such as file names, IDs, and MIME types) from the Google Drive folders you provide.</li>
+    </ul>
+
+    <h2>2. How We Use and Process Your Data</h2>
+    <p>
+        Our application uses Google Drive data solely to perform facial detection, feature extraction, and clustering for your requested session:
+    </p>
+    <ul>
+        <li><strong>In-Memory Processing:</strong> Photos are downloaded into transient memory buffers, analyzed for face embeddings, and clustered. Original photos are not permanently stored on our application servers or database disks.</li>
+        <li><strong>Transient Job Tokens:</strong> A session-isolated job token allows you to review clustered face groups and stream original photos or ZIP archives directly during your session.</li>
+    </ul>
+
+    <div class="highlight-box">
+        <h3 style="color: var(--accent); margin-bottom: 8px;">Google API Services User Data Policy Compliance</h3>
+        <p style="margin-bottom: 0;">
+            Photo Clustering's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements.
         </p>
+    </div>
 
-        <h2>Google Drive Access</h2>
+    <h2>3. Data Sharing, Selling, and Disclosure</h2>
+    <p>
+        We value your privacy:
+    </p>
+    <ul>
+        <li>We <strong>do not sell</strong> user data or photos to third parties.</li>
+        <li>We <strong>do not share</strong> your photos or personal information with advertisers or data brokers.</li>
+        <li>We <strong>do not use</strong> your photos or facial embeddings to train generalized artificial intelligence models.</li>
+    </ul>
 
-        <p>
-            Photo Clustering uses Google OAuth to allow users to select and
-            access photos from their Google Drive. The application requests
-            read-only access to Google Drive files.
-        </p>
+    <h2>4. Data Retention and Security</h2>
+    <p>
+        We employ reasonable security safeguards to protect your session. Authorization tokens are stored in isolated per-job database records and are used exclusively to fulfill your clustering requests. No photos are retained permanently on disk.
+    </p>
 
-        <p>
-            We use Google Drive access only to retrieve photos that are
-            processed by the application for face detection and clustering.
-        </p>
+    <h2>5. User Control and Data Deletion</h2>
+    <p>
+        You maintain complete control over your Google account permissions at all times:
+    </p>
+    <ul>
+        <li>You can revoke Photo Clustering's access to your Google Drive at any time via your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account Security Permissions</a> page.</li>
+        <li>You can request deletion of any session data or records associated with your use of the service by contacting us at the email below.</li>
+    </ul>
 
-        <h2>Information We Access</h2>
-
-        <p>
-            Depending on how you use the application, we may access photo
-            files and basic Google Drive file information such as file names,
-            file IDs, and MIME types.
-        </p>
-
-        <h2>How We Use Your Information</h2>
-
-        <p>
-            The information accessed from Google Drive is used only to provide
-            the photo clustering functionality of the application.
-        </p>
-
-        <h2>Storage</h2>
-
-        <p>
-            Photos may be temporarily downloaded and processed by the
-            application while performing clustering. We do not sell or
-            distribute users' photos or Google Drive information to third
-            parties.
-        </p>
-
-        <h2>Google User Data</h2>
-
-        <p>
-            Photo Clustering does not use Google user data for advertising,
-            selling data, or unrelated purposes.
-        </p>
-
-        <h2>Data Security</h2>
-
-        <p>
-            We take reasonable measures to protect information processed by
-            the application. However, no internet-based service can guarantee
-            absolute security.
-        </p>
-
-        <h2>Data Deletion</h2>
-
-        <p>
-            Users can stop the application's access to their Google Drive by
-            removing the application's access from their Google Account.
-            Temporary application data is removed according to the
-            application's data-retention practices.
-        </p>
-
-        <h2>Contact</h2>
-
-        <p>
-            If you have questions about this Privacy Policy or the use of
-            Google Drive data, contact:
-        </p>
-
-        <p>
-            <strong>poorani24official@gmail.com</strong>
-        </p>
-    </body>
-    </html>
-    """
+    <h2>6. Contact Us</h2>
+    <p>
+        If you have questions about this Privacy Policy, your data, or our compliance with Google API policies, please contact:
+    </p>
+    <p>
+        <strong>Email:</strong> <a href="mailto:poorani24official@gmail.com">poorani24official@gmail.com</a>
+    </p>
+</body>
+</html>"""
 
 
 @app.get("/terms", response_class=HTMLResponse)
 def terms_of_service():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Terms of Service - Photo Clustering</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 900px;
-                margin: 40px auto;
-                padding: 20px;
-                line-height: 1.6;
-            }
-            h1, h2 {
-                color: #222;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Terms of Service</h1>
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms of Service - Photo Clustering</title>
+    <style>
+        :root {
+            --bg: #0b0c10;
+            --panel: #1f2833;
+            --ink: #f5f5f7;
+            --ink-dim: #c5c6c7;
+            --accent: #66fcf1;
+            --line: rgba(255, 255, 255, 0.1);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--ink);
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 40px 24px;
+            line-height: 1.7;
+        }
+        h1 {
+            color: var(--accent);
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+        h2 {
+            color: var(--ink);
+            font-size: 1.3rem;
+            margin-top: 32px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 6px;
+        }
+        p, li {
+            color: var(--ink-dim);
+            margin-bottom: 14px;
+            font-size: 1rem;
+        }
+        ul {
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .meta-date {
+            color: var(--ink-dim);
+            font-size: 0.9rem;
+            margin-bottom: 24px;
+        }
+        .nav-link {
+            display: inline-block;
+            margin-bottom: 24px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="nav-link">&larr; Back to Photo Clustering</a>
+    <h1>Terms of Service</h1>
+    <div class="meta-date"><strong>Last updated:</strong> August 30, 2026</div>
 
-        <p><strong>Last updated:</strong> August 30, 2026</p>
+    <h2>1. Acceptance of Terms</h2>
+    <p>
+        By accessing or using <strong>Photo Clustering</strong> (<a href="https://photo-clustering.onrender.com">https://photo-clustering.onrender.com</a>), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the service.
+    </p>
 
-        <h2>Acceptance of Terms</h2>
+    <h2>2. Description of Service</h2>
+    <p>
+        Photo Clustering provides tools to analyze images stored in your Google Drive, detect faces, cluster them by individual, and enable previewing and downloading organized photo groups.
+    </p>
 
-        <p>
-            By using Photo Clustering, you agree to these Terms of Service.
-            If you do not agree with these terms, please do not use the
-            application.
-        </p>
+    <h2>3. User Responsibilities & Google Drive Content</h2>
+    <p>
+        You are solely responsible for any Google Drive folders and image files you submit for processing. You represent and warrant that you have all necessary rights, licenses, and permissions to access and process the images you provide.
+    </p>
 
-        <h2>Description of the Service</h2>
+    <h2>4. Acceptable Use</h2>
+    <p>
+        You agree not to misuse the service, attempt unauthorized access to our systems, or use the service for any unlawful or harmful purposes.
+    </p>
 
-        <p>
-            Photo Clustering is a web application that helps users organize
-            photos by detecting and clustering faces in images.
-        </p>
+    <h2>5. Disclaimer of Warranties & Limitation of Liability</h2>
+    <p>
+        Photo Clustering is provided on an "AS IS" and "AS AVAILABLE" basis without warranties of any kind, whether express or implied. We do not guarantee that the service will be uninterrupted, error-free, or entirely accurate in facial recognition results.
+    </p>
 
-        <h2>Google Drive</h2>
+    <h2>6. Changes to Terms</h2>
+    <p>
+        We reserve the right to update these terms at any time. Changes will be posted on this page with an updated revision date.
+    </p>
 
-        <p>
-            Users may connect their Google Drive account to provide photos
-            for processing. You are responsible for ensuring that you have
-            the necessary rights to access and process the photos you provide.
-        </p>
-
-        <h2>Acceptable Use</h2>
-
-        <p>
-            You agree not to use the application for unlawful purposes or to
-            attempt to interfere with, damage, or gain unauthorized access to
-            the service.
-        </p>
-
-        <h2>Availability</h2>
-
-        <p>
-            Photo Clustering is provided on an "as is" basis. We do not
-            guarantee that the service will always be available or
-            error-free.
-        </p>
-
-        <h2>Changes to the Service</h2>
-
-        <p>
-            We may modify, update, or discontinue parts of the application
-            when necessary.
-        </p>
-
-        <h2>Contact</h2>
-
-        <p>
-            For questions regarding these Terms of Service, contact:
-        </p>
-
-        <p>
-            <strong>poorani24official@gmail.com</strong>
-        </p>
-    </body>
-    </html>
-    """
+    <h2>7. Contact Information</h2>
+    <p>
+        For inquiries regarding these Terms of Service, please contact:
+    </p>
+    <p>
+        <strong>Email:</strong> <a href="mailto:poorani24official@gmail.com">poorani24official@gmail.com</a>
+    </p>
+</body>
+</html>"""
 
 
 
