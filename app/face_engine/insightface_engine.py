@@ -29,8 +29,14 @@ requiring Visual Studio Build Tools on Windows.
 import os
 import numpy as np
 from insightface.app import FaceAnalysis
+import insightface.utils.storage as storage
+
+# Fix upstream double-v0.7 URL bug in insightface 1.0.1
+if hasattr(storage, "BASE_REPO_URL") and storage.BASE_REPO_URL.endswith("/v0.7"):
+    storage.BASE_REPO_URL = storage.BASE_REPO_URL[:-5]
 
 from app.face_engine.base import FaceEngine
+
 
 
 class InsightFaceEngine(FaceEngine):
