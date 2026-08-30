@@ -71,13 +71,27 @@ CREATE TABLE IF NOT EXISTS oauth_pending_states (
 """
 
 
+# In-memory thread-safe cache for robust job retrieval across concurrent workers/requests
+_JOB_CACHE: dict[str, dict] = {}
+_ID_TO_TOKEN_CACHE: dict[int, str] = {}
+
+
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     try:
         yield conn
         conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -199,25 +213,84 @@ def create_job() -> tuple[int, str]:
     token = secrets.token_urlsafe(32)
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO jobs (public_job_token, status) VALUES (?, 'pending')", (token,)
+            "INSERT INTO jobs (public_job_token, status, message) VALUES (?, 'pending', 'Initializing...')", (token,)
         )
-        return cur.lastrowid, token
+        job_id = cur.lastrowid
+
+    job_dict = {
+        "id": job_id,
+        "public_job_token": token,
+        "status": "pending",
+        "total_files": 0,
+        "processed_files": 0,
+        "duplicate_files_skipped": 0,
+        "message": "Initializing...",
+        "created_at": None,
+    }
+    _JOB_CACHE[token] = job_dict
+    _ID_TO_TOKEN_CACHE[job_id] = token
+    print(f"[JOB CREATE] job_id={job_id} public_token={token}")
+    return job_id, token
 
 
 def get_job_by_token(public_job_token: str) -> dict | None:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM jobs WHERE public_job_token = ?", (public_job_token,)
-        ).fetchone()
-        return dict(row) if row else None
+    if not public_job_token:
+        print("[JOB GET] job_id=None -> 404 Not Found")
+        return None
+
+    clean_token = str(public_job_token).strip()
+
+    # 1. Primary: Database read
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE public_job_token = ?", (clean_token,)
+            ).fetchone()
+            if row:
+                res = dict(row)
+                _JOB_CACHE[clean_token] = res
+                _ID_TO_TOKEN_CACHE[res["id"]] = clean_token
+                print(f"[JOB GET] job_id={clean_token} (db id={res['id']}) -> status={res.get('status')}")
+                return res
+
+            # Fallback: lookup by integer ID if passed
+            if clean_token.isdigit():
+                row = conn.execute("SELECT * FROM jobs WHERE id = ?", (int(clean_token),)).fetchone()
+                if row:
+                    res = dict(row)
+                    print(f"[JOB GET] job_id={clean_token} (found by int id={res['id']}) -> status={res.get('status')}")
+                    return res
+    except Exception as e:
+        print(f"[ERROR] [get_job_by_token db read error]: {e}")
+
+    # 2. Secondary: In-memory cache fallback
+    if clean_token in _JOB_CACHE:
+        cached = _JOB_CACHE[clean_token]
+        print(f"[JOB GET] job_id={clean_token} (from in-memory cache) -> status={cached.get('status')}")
+        return cached
+
+    print(f"[JOB GET] job_id={clean_token} -> 404 Not Found")
+    return None
 
 
 def update_job(job_id: int, **fields):
     if not fields:
         return
     cols = ", ".join(f"{k} = ?" for k in fields)
-    with get_conn() as conn:
-        conn.execute(f"UPDATE jobs SET {cols} WHERE id = ?", (*fields.values(), job_id))
+    try:
+        with get_conn() as conn:
+            conn.execute(f"UPDATE jobs SET {cols} WHERE id = ?", (*fields.values(), job_id))
+    except Exception as e:
+        print(f"[ERROR] [update_job db error for job {job_id}]: {e}")
+
+    # Update in-memory cache
+    token = _ID_TO_TOKEN_CACHE.get(job_id)
+    if token and token in _JOB_CACHE:
+        _JOB_CACHE[token].update(fields)
+
+    status_val = fields.get("status", "")
+    print(f"[JOB UPDATE] job_id={job_id} status={status_val}")
+
 
 
 def get_job(job_id: int):

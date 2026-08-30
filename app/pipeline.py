@@ -276,10 +276,14 @@ def run_job(job_id: int, folder_links: list[str]):
             status="done",
             message=f"Done. Found {people_count} distinct people across {processed_count} photos.",
         )
+        print(f"[JOB COMPLETE] job_id={job_id} status=done (people={people_count}, photos={processed_count})")
 
     except Exception as e:
-        db.update_job(job_id, status="error", message=f"{type(e).__name__}: {e}")
+        err_msg = f"{type(e).__name__}: {e}"
+        db.update_job(job_id, status="error", message=err_msg)
+        print(f"[JOB COMPLETE] job_id={job_id} status=error err={err_msg}")
         traceback.print_exc()
+
 
 
 

@@ -164,22 +164,30 @@ def process_folder(req: ProcessRequest):
 def get_job(public_job_token: str):
     job = db.get_job_by_token(public_job_token)
     if not job:
-        raise HTTPException(404, "Job not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found. The job ID may be invalid or expired."
+        )
         
     job_dict = dict(job)
     # Hide internal integer id from the browser
     job_dict["id"] = public_job_token
     
     # Calculate faces count for this job in real-time
-    with db.get_conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(faces.id) AS c FROM faces JOIN photos ON photos.id = faces.photo_id WHERE photos.job_id = ?",
-            (job["id"],)
-        ).fetchone()
-        faces_count = row["c"] if row else 0
+    try:
+        with db.get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(faces.id) AS c FROM faces JOIN photos ON photos.id = faces.photo_id WHERE photos.job_id = ?",
+                (job["id"],)
+            ).fetchone()
+            faces_count = row["c"] if row else 0
+    except Exception as e:
+        print(f"[WARNING] Faces count query error: {e}")
+        faces_count = 0
+        
     job_dict["faces_count"] = faces_count
-    
     return job_dict
+
 
 
 @app.get("/api/jobs/{public_job_token}/people")

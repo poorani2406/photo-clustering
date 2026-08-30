@@ -218,47 +218,58 @@ async function startProcessing() {
 }
 
 
-function pollJob() {
+async function pollJob() {
   clearTimeout(pollHandle);
 
-  fetch(`/api/jobs/${currentJobId}`)
-    .then((r) => r.json())
-    .then((job) => {
-      const pct = STATUS_PROGRESS[job.status] ?? 50;
-      statusFill.style.width = `${pct}%`;
-      statusText.textContent = job.message || job.status;
+  try {
+    const res = await fetch(`/api/jobs/${currentJobId}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Job not found" }));
+      statusText.textContent = err.detail || `Job not found (${res.status}). Please try starting the process again.`;
+      statusText.classList.add("error");
+      processBtn.disabled = false;
+      addFolderBtn.disabled = false;
+      document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
+      document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
+      return; // Stop polling immediately on 404/error
+    }
 
-      // Update stats cards dynamically
-      statDiscovered.textContent = job.total_files || 0;
-      statSkipped.textContent = job.duplicate_files_skipped || 0;
-      statProcessed.textContent = job.processed_files || 0;
-      statFaces.textContent = job.faces_count || 0;
+    const job = await res.json();
+    const pct = STATUS_PROGRESS[job.status] ?? 50;
+    statusFill.style.width = `${pct}%`;
+    statusText.textContent = job.message || job.status;
 
-      if (job.status === "error") {
-        statusText.classList.add("error");
-        processBtn.disabled = false;
-        addFolderBtn.disabled = false;
-        document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
-        document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
-        return;
-      }
+    // Update stats cards dynamically
+    statDiscovered.textContent = job.total_files || 0;
+    statSkipped.textContent = job.duplicate_files_skipped || 0;
+    statProcessed.textContent = job.processed_files || 0;
+    statFaces.textContent = job.faces_count || 0;
 
-      if (job.status === "done") {
-        processBtn.disabled = false;
-        addFolderBtn.disabled = false;
-        document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
-        document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
-        showCompletionPanel(job);
-        return;
-      }
+    if (job.status === "error") {
+      statusText.classList.add("error");
+      processBtn.disabled = false;
+      addFolderBtn.disabled = false;
+      document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
+      document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
+      return;
+    }
 
-      pollHandle = setTimeout(pollJob, 1200);
-    })
-    .catch((e) => {
-      console.error(e);
-      pollHandle = setTimeout(pollJob, 2000);
-    });
+    if (job.status === "done") {
+      processBtn.disabled = false;
+      addFolderBtn.disabled = false;
+      document.querySelectorAll(".remove-folder-btn").forEach(btn => btn.disabled = false);
+      document.querySelectorAll(".folder-link-input").forEach(inp => inp.disabled = false);
+      showCompletionPanel(job);
+      return;
+    }
+
+    pollHandle = setTimeout(pollJob, 1200);
+  } catch (err) {
+    console.error("Polling network error:", err);
+    pollHandle = setTimeout(pollJob, 2000);
+  }
 }
+
 
 
 async function showCompletionPanel(job) {
