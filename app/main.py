@@ -23,8 +23,10 @@ from app.pipeline import run_job, run_direct_upload_job
 
 app = FastAPI(title="Photo Clustering")
 
-# Initialize/migrate database on application startup
+# Initialize database on application startup
 db.init_db()
+print("[PROCESS STARTUP] Photo Clustering FastAPI application loaded and ready.")
+
 
 
 class ProcessRequest(BaseModel):

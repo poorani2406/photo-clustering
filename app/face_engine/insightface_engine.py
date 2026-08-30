@@ -29,26 +29,28 @@ requiring Visual Studio Build Tools on Windows.
 import numpy as np
 from insightface.app import FaceAnalysis
 
+
 from app.face_engine.base import FaceEngine
 
 
 class InsightFaceEngine(FaceEngine):
     def __init__(self, model_name: str = "buffalo_l", ctx_id: int = -1, det_size=(640, 640)):
         """
-        model_name: InsightFace model pack. Downloaded once to ~/.insightface
-            on first use, then cached.
-        ctx_id: -1 = CPU, >=0 = GPU device index. Defaults to CPU so this
-            works out of the box on any machine, including Windows laptops
-            with no CUDA setup.
-        det_size: input resolution for the detector. 640x640 is InsightFace's
-            standard default and a good speed/accuracy tradeoff.
+        model_name: InsightFace model pack.
+        ctx_id: -1 for CPU execution.
+        allowed_modules: loads only detection + recognition (ArcFace), skipping unused 3D/landmark/genderage models.
         """
-        self._app = FaceAnalysis(name=model_name)
-        self._app.prepare(ctx_id=ctx_id, det_size=det_size)
+        print(f"[FACE ENGINE] Initializing InsightFace on CPU (modules: detection, recognition, det_size: {det_size})...")
+        # Explicitly configure CPU execution provider without searching for CUDA
+        self._app = FaceAnalysis(
+            name=model_name,
+            allowed_modules=["detection", "recognition"],
+            providers=["CPUExecutionProvider"]
+        )
+        self._app.prepare(ctx_id=-1, det_size=det_size)
+        print("[FACE ENGINE] InsightFace CPU engine pre-warmed and ready.")
 
     def detect_faces(self, image_bytes: bytes) -> list[dict]:
-        # cv2 reads images as BGR numpy arrays, which is exactly what
-        # FaceAnalysis.get() expects.
         import cv2
 
         image = cv2.imdecode(
@@ -58,18 +60,34 @@ class InsightFaceEngine(FaceEngine):
         if image is None:
             return []
 
-        detected = self._app.get(image)
+        orig_h, orig_w = image.shape[:2]
+        # Optimize CPU detection speed and RAM by scaling down oversized raw photos
+        max_dim = 1280
+        scale = 1.0
+        if max(orig_h, orig_w) > max_dim:
+            scale = max_dim / float(max(orig_h, orig_w))
+            new_w = int(round(orig_w * scale))
+            new_h = int(round(orig_h * scale))
+            det_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            det_image = image
+
+        detected = self._app.get(det_image)
 
         faces = []
         for face in detected:
             x1, y1, x2, y2 = face.bbox
+            if scale != 1.0:
+                x1, y1, x2, y2 = x1 / scale, y1 / scale, x2 / scale, y2 / scale
+
             faces.append(
                 {
-                    "top": int(round(y1)),
-                    "right": int(round(x2)),
-                    "bottom": int(round(y2)),
-                    "left": int(round(x1)),
+                    "top": max(0, int(round(y1))),
+                    "right": min(orig_w, int(round(x2))),
+                    "bottom": min(orig_h, int(round(y2))),
+                    "left": max(0, int(round(x1))),
                     "embedding": np.asarray(face.normed_embedding, dtype=np.float32),
                 }
             )
         return faces
+

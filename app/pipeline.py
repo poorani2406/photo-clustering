@@ -179,6 +179,7 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
 
 
 def run_job(job_id: int, folder_links: list[str]):
+    print(f"[WORKER START] job_id={job_id} starting processing for {len(folder_links)} folder link(s)")
     face_engine = get_face_engine()
     try:
         db.update_job(job_id, status="connecting", message="Connecting to Google Drive...")
@@ -187,6 +188,7 @@ def run_job(job_id: int, folder_links: list[str]):
             service = get_drive_service()
         except Exception as e:
             err_msg = str(e)
+            print(f"[WORKER EXCEPTION] job_id={job_id} drive_service_init_error={err_msg}")
             db.update_job(job_id, status="error", message=err_msg)
             return
 
@@ -217,21 +219,24 @@ def run_job(job_id: int, folder_links: list[str]):
                 status="error",
                 message=error_message,
             )
+            print(f"[JOB COMPLETE] job_id={job_id} status=error msg='{error_message}'")
             return
-
 
         # Enforce MAX_FILES_PER_JOB limit
         if len(deduped_files) > MAX_FILES_PER_JOB:
             error_msg = f"Job exceeded the limit of {MAX_FILES_PER_JOB} files (found {len(deduped_files)} after deduplication)."
             db.update_job(job_id, status="error", message=error_msg)
+            print(f"[JOB COMPLETE] job_id={job_id} status=error limit_exceeded={error_msg}")
             raise ValueError(error_msg)
 
+        print(f"[DOWNLOAD COMPLETE] job_id={job_id} prepared {len(deduped_files)} unique photos (discovered={total_discovered}, skipped_dupes={duplicate_count})")
         db.update_job(job_id, status="downloading", processed_files=0)
 
         seen_hashes = set()
         level_2_skips = 0
         processed_count = 0
 
+        print(f"[FACE DETECTION START] job_id={job_id} starting CPU face detection on {len(deduped_files)} photos")
         for i, f in enumerate(deduped_files, start=1):
             db.update_job(
                 job_id,
@@ -247,30 +252,23 @@ def run_job(job_id: int, folder_links: list[str]):
                 processed_count += 1
                 db.update_job(job_id, processed_files=processed_count)
 
+        print(f"[CLUSTERING START] job_id={job_id} grouping detected faces for {processed_count} photos")
         db.update_job(job_id, status="clustering", message="Grouping faces into people...", processed_files=processed_count)
 
-        print(f"[DEBUG] [run_job {job_id}] Starting clustering stage.")
         face_rows = db.get_faces_for_job(job_id)
-        print(f"[DEBUG] [run_job {job_id}] db.get_faces_for_job returned {len(face_rows)} face rows.")
-
         assignments = cluster_faces(face_rows)  # face_id -> cluster_index
-        print(f"[DEBUG] [run_job {job_id}] cluster_faces returned {len(assignments)} assignments.")
 
         db.clear_people_for_job(job_id)
-        print(f"[DEBUG] [run_job {job_id}] Cleared existing people for job.")
 
         cluster_to_person = {}
         for face in face_rows:
             cluster_idx = assignments[face["id"]]
-            print(f"[DEBUG] [run_job {job_id}] Mapping face_id={face['id']} to cluster_idx={cluster_idx}")
             if cluster_idx not in cluster_to_person:
                 person_id = db.create_person(job_id, f"Person {cluster_idx + 1}", face["id"])
                 cluster_to_person[cluster_idx] = person_id
-                print(f"[DEBUG] [run_job {job_id}] Created new person_id={person_id} for cluster_idx={cluster_idx}")
             db.set_face_person(face["id"], cluster_to_person[cluster_idx])
 
         people_count = len(cluster_to_person)
-        print(f"[DEBUG] [run_job {job_id}] Clustering completed. Found {people_count} distinct people.")
         db.update_job(
             job_id,
             status="done",
@@ -280,9 +278,11 @@ def run_job(job_id: int, folder_links: list[str]):
 
     except Exception as e:
         err_msg = f"{type(e).__name__}: {e}"
+        print(f"[WORKER EXCEPTION] job_id={job_id} error={err_msg}")
         db.update_job(job_id, status="error", message=err_msg)
         print(f"[JOB COMPLETE] job_id={job_id} status=error err={err_msg}")
         traceback.print_exc()
+
 
 
 

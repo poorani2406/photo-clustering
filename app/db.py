@@ -96,115 +96,35 @@ def get_conn():
         conn.close()
 
 
-def migrate_database(conn):
-    print("[MIGRATION] Starting database migration...")
-    
-    # 1. Turn off foreign keys temporarily so we can restructure
-    conn.execute("PRAGMA foreign_keys = OFF;")
-    
-    # 2. Rename old tables
-    conn.execute("ALTER TABLE jobs RENAME TO jobs_old;")
-    conn.execute("ALTER TABLE photos RENAME TO photos_old;")
-    
-    # 3. Create new tables
-    conn.executescript(SCHEMA)
-    
-    # 4. Migrate jobs and create job_sources
-    cursor = conn.execute("SELECT * FROM jobs_old")
-    old_jobs = cursor.fetchall()
-    
-    for job in old_jobs:
-        job_id = job["id"]
-        folder_id = job["folder_id"]
-        status = job["status"]
-        total_files = job["total_files"]
-        processed_files = job["processed_files"]
-        message = job["message"]
-        created_at = job["created_at"]
-        
-        # Generate token
-        token = secrets.token_urlsafe(32)
-        
-        # Insert into new jobs table
-        conn.execute(
-            """
-            INSERT INTO jobs (id, public_job_token, status, total_files, processed_files, duplicate_files_skipped, message, created_at)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-            """,
-            (job_id, token, status, total_files, processed_files, message, created_at)
-        )
-        
-        # Create a job source row
-        source_status = "completed" if status == "done" else ("failed" if status == "error" else "pending")
-        conn.execute(
-            """
-            INSERT INTO job_sources (job_id, raw_link, folder_id, resourcekey, status, message)
-            VALUES (?, ?, ?, NULL, ?, ?)
-            """,
-            (job_id, folder_id, folder_id, source_status, message)
-        )
-        
-    # 5. Migrate photos
-    conn.execute(
-        """
-        INSERT INTO photos (id, job_id, source_id, drive_file_id, filename, mime_type, size_bytes, face_count)
-        SELECT p.id, p.job_id, s.id, p.drive_file_id, p.filename, NULL, NULL, p.face_count
-        FROM photos_old p
-        LEFT JOIN job_sources s ON s.job_id = p.job_id;
-        """
-    )
-    
-    # 6. Drop old tables
-    conn.execute("DROP TABLE jobs_old;")
-    conn.execute("DROP TABLE photos_old;")
-    
-    # 7. Turn on foreign keys
-    conn.execute("PRAGMA foreign_keys = ON;")
-    print("[MIGRATION] Database migration completed successfully.")
-
-
 def init_db():
+    print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH} (WAL mode enabled)...")
     with get_conn() as conn:
-        # Check if we need to migrate from old schema
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
-        has_jobs = cursor.fetchone()
-        
-        needs_migration = False
-        if has_jobs:
-            cursor = conn.execute("PRAGMA table_info(jobs)")
-            columns = [row["name"] for row in cursor.fetchall()]
-            if "public_job_token" not in columns:
-                needs_migration = True
-        
-        if needs_migration:
-            migrate_database(conn)
-            
-        # Check if jobs table is missing oauth_token
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
-        has_jobs = cursor.fetchone()
-        if has_jobs:
-            cursor = conn.execute("PRAGMA table_info(jobs)")
-            columns = [row["name"] for row in cursor.fetchall()]
-            if "oauth_token" not in columns:
-                print("[MIGRATION] jobs table is missing oauth_token. Adding column...")
-                conn.execute("ALTER TABLE jobs ADD COLUMN oauth_token TEXT;")
-                print("[MIGRATION] oauth_token column added successfully.")
-            
-        # Also check if photos table is missing content_hash or storage_path
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='photos'")
-        has_photos = cursor.fetchone()
-        if has_photos:
-            cursor = conn.execute("PRAGMA table_info(photos)")
-            columns = [row["name"] for row in cursor.fetchall()]
-            if "content_hash" not in columns:
-                print("[MIGRATION] photos table is missing content_hash. Adding column...")
-                conn.execute("ALTER TABLE photos ADD COLUMN content_hash TEXT;")
-            if "storage_path" not in columns:
-                print("[MIGRATION] photos table is missing storage_path. Adding column...")
-                conn.execute("ALTER TABLE photos ADD COLUMN storage_path TEXT;")
-                
-        # Ensure all tables (including any new ones like oauth_pending_states) are created
+        # Create all tables safely if they do not exist
         conn.executescript(SCHEMA)
+        
+        # Ensure optional/extended columns exist in existing deployments
+        try:
+            cursor = conn.execute("PRAGMA table_info(jobs)")
+            job_cols = [row["name"] for row in cursor.fetchall()]
+            if "public_job_token" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN public_job_token TEXT UNIQUE;")
+            if "duplicate_files_skipped" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN duplicate_files_skipped INTEGER DEFAULT 0;")
+        except Exception as e:
+            print(f"[DB INIT WARNING] jobs table check: {e}")
+
+        try:
+            cursor = conn.execute("PRAGMA table_info(photos)")
+            photo_cols = [row["name"] for row in cursor.fetchall()]
+            if "content_hash" not in photo_cols:
+                conn.execute("ALTER TABLE photos ADD COLUMN content_hash TEXT;")
+            if "storage_path" not in photo_cols:
+                conn.execute("ALTER TABLE photos ADD COLUMN storage_path TEXT;")
+        except Exception as e:
+            print(f"[DB INIT WARNING] photos table check: {e}")
+            
+        print("[PROCESS STARTUP] SQLite database initialized and ready.")
+
 
 
 # ---------- jobs ----------
