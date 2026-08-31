@@ -25,7 +25,18 @@ app = FastAPI(title="Photo Clustering")
 
 # Initialize database on application startup
 db.init_db()
+
+# Pre-initialize Face Engine synchronously on application boot
+from app.face_engine import get_face_engine
+print("[PROCESS STARTUP] Initializing and warming up InsightFace CPU engine on boot...")
+try:
+    get_face_engine()
+    print("[PROCESS STARTUP] InsightFace CPU engine ready.")
+except Exception as e:
+    print(f"[PROCESS STARTUP WARNING] Lazy loading will be used: {e}")
+
 print("[PROCESS STARTUP] Photo Clustering FastAPI application loaded and ready.")
+
 
 
 @app.get("/health")
