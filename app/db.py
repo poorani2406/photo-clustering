@@ -135,24 +135,25 @@ def create_job() -> tuple[int, str]:
     token = secrets.token_urlsafe(32)
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO jobs (public_job_token, status, message) VALUES (?, 'pending', 'Initializing...')", (token,)
+            "INSERT INTO jobs (public_job_token, status, message) VALUES (?, 'connecting', 'Connecting to Google Drive...')", (token,)
         )
         job_id = cur.lastrowid
 
     job_dict = {
         "id": job_id,
         "public_job_token": token,
-        "status": "pending",
+        "status": "connecting",
         "total_files": 0,
         "processed_files": 0,
         "duplicate_files_skipped": 0,
-        "message": "Initializing...",
+        "message": "Connecting to Google Drive...",
         "created_at": None,
     }
     _JOB_CACHE[token] = job_dict
     _ID_TO_TOKEN_CACHE[job_id] = token
     print(f"[JOB CREATE] job_id={job_id} public_token={token}")
     return job_id, token
+
 
 
 def get_job_by_token(public_job_token: str) -> dict | None:
