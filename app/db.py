@@ -78,20 +78,14 @@ _ID_TO_TOKEN_CACHE: dict[int, str] = {}
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(str(DB_PATH), timeout=5.0, check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), timeout=5.0, check_same_thread=False, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000;")
     try:
         yield conn
-        conn.commit()
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        raise
     finally:
         conn.close()
+
 
 
 
@@ -201,19 +195,22 @@ def update_job(job_id: int, **fields):
     if not fields:
         return
     cols = ", ".join(f"{k} = ?" for k in fields)
+    token = _ID_TO_TOKEN_CACHE.get(job_id)
     try:
         with get_conn() as conn:
             conn.execute(f"UPDATE jobs SET {cols} WHERE id = ?", (*fields.values(), job_id))
+            if token:
+                conn.execute(f"UPDATE jobs SET {cols} WHERE public_job_token = ?", (*fields.values(), token))
     except Exception as e:
-        print(f"[ERROR] [update_job db error for job {job_id}]: {e}")
+        print(f"[ERROR] [update_job db error for job {job_id}]: {e}", flush=True)
 
     # Update in-memory cache
-    token = _ID_TO_TOKEN_CACHE.get(job_id)
     if token and token in _JOB_CACHE:
         _JOB_CACHE[token].update(fields)
 
     status_val = fields.get("status", "")
-    print(f"[JOB UPDATE] job_id={job_id} status={status_val}")
+    print(f"[JOB UPDATE] job_id={job_id} status={status_val}", flush=True)
+
 
 
 
