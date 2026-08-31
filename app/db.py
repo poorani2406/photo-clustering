@@ -80,9 +80,9 @@ _ID_TO_TOKEN_CACHE: dict[int, str] = {}
 def get_conn():
     conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA journal_mode=DELETE;")
+    conn.execute("PRAGMA synchronous=FULL;")
     try:
         yield conn
         conn.commit()
@@ -97,7 +97,8 @@ def get_conn():
 
 
 def init_db():
-    print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH} (WAL mode enabled)...")
+    print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH}...")
+
     with get_conn() as conn:
         # Create all tables safely if they do not exist
         conn.executescript(SCHEMA)
