@@ -197,14 +197,17 @@ def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
         
     def _safe_worker():
         try:
+            print(f"[WORKER START] Spawning worker task for job_id={job_id}", flush=True)
             run_job(job_id, links)
+            print(f"[WORKER DONE] Completed worker task for job_id={job_id}", flush=True)
         except Exception as e:
-            print(f"[FATAL WORKER ERROR job_id={job_id}]: {e}")
+            print(f"[FATAL WORKER ERROR job_id={job_id}]: {e}", flush=True)
             traceback.print_exc()
             try:
                 db.update_job(job_id, status="error", message=f"Processing failed: {e}")
             except Exception:
                 pass
+
 
     background_tasks.add_task(_safe_worker)
     
