@@ -13,8 +13,10 @@ return immediately, and the frontend polls /api/jobs/{id} for progress.
 """
 import traceback
 import os
+from typing import Optional
 import cv2
 import numpy as np
+
 
 from app import db
 from app.config import DATA_DIR, MAX_FILE_SIZE_BYTES, MAX_FILES_PER_JOB
