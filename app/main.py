@@ -166,7 +166,7 @@ def _stream_zip(photos: list[dict]):
 # ---------- Route Handlers ----------
 
 @app.post("/api/process")
-def process_folder(req: ProcessRequest):
+def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
     """
     Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
     Requires no OAuth or user login.
@@ -206,10 +206,10 @@ def process_folder(req: ProcessRequest):
             except Exception:
                 pass
 
-    thread = threading.Thread(target=_safe_worker, daemon=True)
-    thread.start()
+    background_tasks.add_task(_safe_worker)
     
     return {"job_id": public_token}
+
 
 
 
