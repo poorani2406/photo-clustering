@@ -188,7 +188,7 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
 
     try:
         # 1. Immediately transition out of 'pending'
-        _update_status(status="connecting", message="Connecting to Google Drive and initializing face engine...")
+        _update_status(status="connecting", message="Connecting to Google Drive...")
 
         # 2. Initialize Drive service
         try:
@@ -196,16 +196,6 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
         except Exception as e:
             err_msg = str(e)
             print(f"[WORKER EXCEPTION] job_id={job_id} drive_service_init_error={err_msg}", flush=True)
-            _update_status(status="error", message=err_msg)
-            return
-
-        # 3. Initialize Face Engine inside try block
-        try:
-            face_engine = get_face_engine()
-        except Exception as e:
-            err_msg = f"Failed to initialize Face Engine: {e}"
-            print(f"[WORKER EXCEPTION] job_id={job_id} face_engine_init_error={err_msg}", flush=True)
-            traceback.print_exc()
             _update_status(status="error", message=err_msg)
             return
 
@@ -247,6 +237,17 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
 
         print(f"[DOWNLOAD COMPLETE] job_id={job_id} prepared {len(deduped_files)} unique photos (discovered={total_discovered}, skipped_dupes={duplicate_count})", flush=True)
         _update_status(status="downloading", processed_files=0)
+
+        # Initialize Face Engine when photos are ready for processing
+        try:
+            face_engine = get_face_engine()
+        except Exception as e:
+            err_msg = f"Failed to initialize Face Engine: {e}"
+            print(f"[WORKER EXCEPTION] job_id={job_id} face_engine_init_error={err_msg}", flush=True)
+            traceback.print_exc()
+            _update_status(status="error", message=err_msg)
+            return
+
 
 
         seen_hashes = set()
