@@ -1,11 +1,19 @@
-import io
 import os
+# Configure CPU thread limits before importing heavy math/C libraries
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+import io
 import secrets
 import json
 import threading
 import datetime
 import zipfile
 import shutil
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +30,7 @@ from app.pipeline import run_job, run_direct_upload_job
 
 
 app = FastAPI(title="Photo Clustering")
+
 
 # Initialize database on application startup
 db.init_db()
@@ -186,11 +195,22 @@ def process_folder(req: ProcessRequest):
     for link in links:
         db.create_job_source(job_id, link)
         
-    # Dispatch background worker immediately in a dedicated thread
-    thread = threading.Thread(target=run_job, args=(job_id, links), daemon=True)
+    def _safe_worker():
+        try:
+            run_job(job_id, links)
+        except Exception as e:
+            print(f"[FATAL WORKER ERROR job_id={job_id}]: {e}")
+            traceback.print_exc()
+            try:
+                db.update_job(job_id, status="error", message=f"Processing failed: {e}")
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_safe_worker, daemon=True)
     thread.start()
     
     return {"job_id": public_token}
+
 
 
 
