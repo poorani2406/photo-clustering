@@ -163,6 +163,11 @@ def _stream_zip(photos: list[dict]):
     return stream_zip(file_entries())
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+WORKER_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="JobWorker")
+
+
 def run_job_safe(job_id: int, public_token: str, links: list[str]):
     print(f"[WORKER START] Spawning worker task for job_id={job_id} token={public_token}", flush=True)
     try:
@@ -181,7 +186,7 @@ def run_job_safe(job_id: int, public_token: str, links: list[str]):
 # ---------- Route Handlers ----------
 
 @app.post("/api/process")
-async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
+def process_folder(req: ProcessRequest):
     """
     Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
     Requires no OAuth or user login.
@@ -210,9 +215,10 @@ async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks)
     for link in links:
         db.create_job_source(job_id, link)
         
-    background_tasks.add_task(run_job_safe, job_id, public_token, links)
+    WORKER_POOL.submit(run_job_safe, job_id, public_token, links)
     
     return {"job_id": public_token}
+
 
 
 
