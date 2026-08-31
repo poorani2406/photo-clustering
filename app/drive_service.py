@@ -132,13 +132,16 @@ def classify_drive_error(exception: HttpError) -> DriveErrorCategory:
 
 def get_drive_service(api_key: Optional[str] = None):
     """Returns a Google Drive API client using a backend API key for public folder access."""
+    import httplib2
     key = api_key or os.getenv("GOOGLE_DRIVE_API_KEY") or GOOGLE_DRIVE_API_KEY
     if not key or not key.strip():
         raise RuntimeError(
             "GOOGLE_DRIVE_API_KEY environment variable is not configured on the server. "
             "Please set GOOGLE_DRIVE_API_KEY to access publicly shared Google Drive folders."
         )
-    return build("drive", "v3", developerKey=key.strip(), static_discovery=True)
+    http = httplib2.Http(timeout=10.0)
+    return build("drive", "v3", developerKey=key.strip(), http=http, static_discovery=True)
+
 
 
 
