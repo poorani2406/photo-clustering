@@ -209,9 +209,11 @@ def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
     for link in links:
         db.create_job_source(job_id, link)
         
-    background_tasks.add_task(run_job_safe, job_id, links)
+    thread = threading.Thread(target=run_job_safe, args=(job_id, links), daemon=True)
+    thread.start()
     
     return {"job_id": public_token}
+
 
 
 

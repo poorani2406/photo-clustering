@@ -78,26 +78,35 @@ _ID_TO_TOKEN_CACHE: dict[int, str] = {}
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(str(DB_PATH), timeout=5.0, check_same_thread=False, isolation_level=None)
+    conn = sqlite3.connect(str(DB_PATH), timeout=10.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA busy_timeout=10000;")
     try:
         yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
 
-
-
 def init_db():
     print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH}...")
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    raw_conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    try:
+        raw_conn.execute("PRAGMA journal_mode=WAL;")
+        raw_conn.execute("PRAGMA synchronous=NORMAL;")
+        raw_conn.execute("PRAGMA busy_timeout=30000;")
+        raw_conn.executescript(SCHEMA)
+        raw_conn.commit()
+    finally:
+        raw_conn.close()
 
-    with get_conn() as conn:
-        conn.execute("PRAGMA busy_timeout=30000;")
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        # Create all tables safely if they do not exist
-        conn.executescript(SCHEMA)
 
         
         # Ensure optional/extended columns exist in existing deployments
