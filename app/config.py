@@ -6,10 +6,16 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DATA_DIR = BASE_DIR / os.getenv("DATA_DIR", "data")
+# On Linux cloud deployments (like Render), place DATA_DIR in /tmp to prevent watchfiles/reloader restarts
+if os.name != "nt" and (os.getenv("RENDER") or os.getenv("ENV") == "production" or not os.getenv("DATA_DIR")):
+    DATA_DIR = Path("/tmp/photo_clustering_data")
+else:
+    DATA_DIR = BASE_DIR / os.getenv("DATA_DIR", "data")
+
 DB_PATH = DATA_DIR / "app.db"
 
 GOOGLE_DRIVE_API_KEY = os.getenv("GOOGLE_DRIVE_API_KEY", "AIzaSyCHT-VLcAv11d1ACJBZVQyI16DxfIRgyNM")
+
 
 
 
