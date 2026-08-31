@@ -9,7 +9,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / os.getenv("DATA_DIR", "data")
 DB_PATH = DATA_DIR / "app.db"
 
-GOOGLE_DRIVE_API_KEY = os.getenv("GOOGLE_DRIVE_API_KEY", "")
+GOOGLE_DRIVE_API_KEY = os.getenv("GOOGLE_DRIVE_API_KEY", "AIzaSyCHT-VLcAv11d1ACJBZVQyI16DxfIRgyNM")
+
 
 
 MAX_FILE_SIZE_BYTES = int(
