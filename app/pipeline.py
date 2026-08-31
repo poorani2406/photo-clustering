@@ -178,19 +178,25 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
     return False
 
 
-def run_job(job_id: int, folder_links: list[str]):
-    print(f"[WORKER START] job_id={job_id} starting processing for {len(folder_links)} folder link(s)")
+def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = None):
+    print(f"[WORKER START] job_id={job_id} token={public_token} starting processing for {len(folder_links)} folder link(s)", flush=True)
+    
+    def _update_status(**fields):
+        db.update_job(job_id, **fields)
+        if public_token:
+            db.update_job_by_token(public_token, **fields)
+
     try:
         # 1. Immediately transition out of 'pending'
-        db.update_job(job_id, status="connecting", message="Connecting to Google Drive and initializing face engine...")
+        _update_status(status="connecting", message="Connecting to Google Drive and initializing face engine...")
 
         # 2. Initialize Drive service
         try:
             service = get_drive_service()
         except Exception as e:
             err_msg = str(e)
-            print(f"[WORKER EXCEPTION] job_id={job_id} drive_service_init_error={err_msg}")
-            db.update_job(job_id, status="error", message=err_msg)
+            print(f"[WORKER EXCEPTION] job_id={job_id} drive_service_init_error={err_msg}", flush=True)
+            _update_status(status="error", message=err_msg)
             return
 
         # 3. Initialize Face Engine inside try block
@@ -198,9 +204,9 @@ def run_job(job_id: int, folder_links: list[str]):
             face_engine = get_face_engine()
         except Exception as e:
             err_msg = f"Failed to initialize Face Engine: {e}"
-            print(f"[WORKER EXCEPTION] job_id={job_id} face_engine_init_error={err_msg}")
+            print(f"[WORKER EXCEPTION] job_id={job_id} face_engine_init_error={err_msg}", flush=True)
             traceback.print_exc()
-            db.update_job(job_id, status="error", message=err_msg)
+            _update_status(status="error", message=err_msg)
             return
 
         # Retrieve job sources from database, or create them if they do not exist
@@ -221,27 +227,27 @@ def run_job(job_id: int, folder_links: list[str]):
         # Merge and Deduplicate (Level 1)
         total_discovered = len(all_files)
         deduped_files, duplicate_count = _merge_and_dedupe(all_files)
-        db.update_job(job_id, total_files=total_discovered, duplicate_files_skipped=duplicate_count)
+        _update_status(total_files=total_discovered, duplicate_files_skipped=duplicate_count)
 
         if not deduped_files:
             error_message = last_error or "No images found in that folder. Please make sure the folder contains images (JPEG, PNG, WEBP, HEIC) and is shared as Anyone with the link -> Viewer."
-            db.update_job(
-                job_id,
+            _update_status(
                 status="error",
                 message=error_message,
             )
-            print(f"[JOB COMPLETE] job_id={job_id} status=error msg='{error_message}'")
+            print(f"[JOB COMPLETE] job_id={job_id} status=error msg='{error_message}'", flush=True)
             return
 
         # Enforce MAX_FILES_PER_JOB limit
         if len(deduped_files) > MAX_FILES_PER_JOB:
             error_msg = f"Job exceeded the limit of {MAX_FILES_PER_JOB} files (found {len(deduped_files)} after deduplication)."
-            db.update_job(job_id, status="error", message=error_msg)
-            print(f"[JOB COMPLETE] job_id={job_id} status=error limit_exceeded={error_msg}")
+            _update_status(status="error", message=error_msg)
+            print(f"[JOB COMPLETE] job_id={job_id} status=error limit_exceeded={error_msg}", flush=True)
             raise ValueError(error_msg)
 
-        print(f"[DOWNLOAD COMPLETE] job_id={job_id} prepared {len(deduped_files)} unique photos (discovered={total_discovered}, skipped_dupes={duplicate_count})")
-        db.update_job(job_id, status="downloading", processed_files=0)
+        print(f"[DOWNLOAD COMPLETE] job_id={job_id} prepared {len(deduped_files)} unique photos (discovered={total_discovered}, skipped_dupes={duplicate_count})", flush=True)
+        _update_status(status="downloading", processed_files=0)
+
 
         seen_hashes = set()
         level_2_skips = 0

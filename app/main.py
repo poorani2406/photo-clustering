@@ -163,16 +163,17 @@ def _stream_zip(photos: list[dict]):
     return stream_zip(file_entries())
 
 
-def run_job_safe(job_id: int, links: list[str]):
-    print(f"[WORKER START] Spawning worker task for job_id={job_id}", flush=True)
+def run_job_safe(job_id: int, public_token: str, links: list[str]):
+    print(f"[WORKER START] Spawning worker task for job_id={job_id} token={public_token}", flush=True)
     try:
-        run_job(job_id, links)
+        run_job(job_id, links, public_token)
         print(f"[WORKER DONE] Completed worker task for job_id={job_id}", flush=True)
     except Exception as e:
         print(f"[FATAL WORKER ERROR job_id={job_id}]: {e}", flush=True)
         traceback.print_exc()
         try:
             db.update_job(job_id, status="error", message=f"Processing failed: {e}")
+            db.update_job_by_token(public_token, status="error", message=f"Processing failed: {e}")
         except Exception:
             pass
 
@@ -180,7 +181,7 @@ def run_job_safe(job_id: int, links: list[str]):
 # ---------- Route Handlers ----------
 
 @app.post("/api/process")
-def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
+async def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
     """
     Initiates asynchronous face clustering for one or more publicly shared Google Drive folders.
     Requires no OAuth or user login.
@@ -209,10 +210,10 @@ def process_folder(req: ProcessRequest, background_tasks: BackgroundTasks):
     for link in links:
         db.create_job_source(job_id, link)
         
-    thread = threading.Thread(target=run_job_safe, args=(job_id, links), daemon=True)
-    thread.start()
+    background_tasks.add_task(run_job_safe, job_id, public_token, links)
     
     return {"job_id": public_token}
+
 
 
 
