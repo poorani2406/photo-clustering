@@ -98,8 +98,11 @@ def init_db():
 
     with get_conn() as conn:
         conn.execute("PRAGMA busy_timeout=30000;")
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         # Create all tables safely if they do not exist
         conn.executescript(SCHEMA)
+
         
         # Ensure optional/extended columns exist in existing deployments
         try:
