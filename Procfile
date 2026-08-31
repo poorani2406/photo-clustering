@@ -1,1 +1,1 @@
-web: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+web: OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
