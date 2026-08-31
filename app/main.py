@@ -215,9 +215,11 @@ def process_folder(req: ProcessRequest):
     for link in links:
         db.create_job_source(job_id, link)
         
+    db.update_job_by_token(public_token, status="connecting", message="Connecting to Google Drive...")
     WORKER_POOL.submit(run_job_safe, job_id, public_token, links)
     
     return {"job_id": public_token}
+
 
 
 
