@@ -209,21 +209,9 @@ def get_job(public_job_token: str):
     job_dict = dict(job)
     # Hide internal integer id from the browser
     job_dict["id"] = public_job_token
-    
-    # Calculate faces count for this job in real-time
-    try:
-        with db.get_conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(faces.id) AS c FROM faces JOIN photos ON photos.id = faces.photo_id WHERE photos.job_id = ?",
-                (job["id"],)
-            ).fetchone()
-            faces_count = row["c"] if row else 0
-    except Exception as e:
-        print(f"[WARNING] Faces count query error: {e}")
-        faces_count = 0
-        
-    job_dict["faces_count"] = faces_count
+    job_dict["faces_count"] = 0
     return job_dict
+
 
 
 
