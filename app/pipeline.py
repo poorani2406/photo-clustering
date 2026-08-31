@@ -111,9 +111,9 @@ def _merge_and_dedupe(all_source_files: list[dict]) -> tuple[list[dict], int]:
     return deduped, skipped
 
 
-def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: dict, seen_hashes: set) -> bool:
+def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: dict, seen_hashes: set) -> tuple[str, str]:
     """Processes a single Google Drive file sequentially in memory.
-    Returns True if skipped as a content duplicate, False otherwise."""
+    Returns (status, reason) where status is 'processed', 'duplicate', or 'skipped'."""
     import hashlib
     file_id = file_entry["id"]
     filename = file_entry["name"]
@@ -121,20 +121,27 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
     resourcekey = file_entry.get("resourcekey")
     mime_type = file_entry.get("mimeType")
 
-    # 1. Fetch file bytes
-    file_bytes = fetch_file_bytes(service, file_id, resourcekey)
+    # 1. Fetch file bytes (catch any Drive/network error per file)
+    try:
+        file_bytes = fetch_file_bytes(service, file_id, resourcekey)
+    except DriveApiError as de:
+        print(f"[PER-FILE WARNING] Skipping inaccessible Drive file '{filename}' ({file_id}) for job {job_id}: {de}", flush=True)
+        return "skipped", f"Drive error: {de}"
+    except Exception as fe:
+        print(f"[PER-FILE WARNING] Skipping file '{filename}' ({file_id}) due to download error: {fe}", flush=True)
+        return "skipped", f"Download error: {fe}"
 
     # 2. Check MAX_FILE_SIZE_BYTES
     size_bytes = len(file_bytes)
     if size_bytes > MAX_FILE_SIZE_BYTES:
-        print(f"[WARNING] Skipping {filename} ({file_id}) because size {size_bytes} exceeds limit of {MAX_FILE_SIZE_BYTES} bytes.")
-        return False
+        print(f"[PER-FILE WARNING] Skipping {filename} ({file_id}) because size {size_bytes} exceeds limit of {MAX_FILE_SIZE_BYTES} bytes.", flush=True)
+        return "skipped", f"File size exceeds limit of {MAX_FILE_SIZE_BYTES} bytes"
 
     # 3. Calculate content hash to check Level 2 duplicates
     content_hash = hashlib.sha256(file_bytes).hexdigest()
     if content_hash in seen_hashes:
-        print(f"[DEBUG] Skipping content duplicate for job {job_id}: {filename} (hash={content_hash})")
-        return True
+        print(f"[DEBUG] Skipping content duplicate for job {job_id}: {filename} (hash={content_hash})", flush=True)
+        return "duplicate", "Duplicate content hash"
     seen_hashes.add(content_hash)
 
     # 4. Save to per-job storage for fast thumbnails & ZIP streaming
@@ -142,17 +149,29 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
     job_dir.mkdir(parents=True, exist_ok=True)
     safe_name = f"{file_id}_{os.path.basename(filename)}"
     storage_path = str(job_dir / safe_name)
-    with open(storage_path, "wb") as f_out:
-        f_out.write(file_bytes)
+    try:
+        with open(storage_path, "wb") as f_out:
+            f_out.write(file_bytes)
+    except Exception as se:
+        print(f"[PER-FILE WARNING] Could not cache file on disk for {filename}: {se}", flush=True)
 
     # 5. Decode image from bytes in memory
-    img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    try:
+        img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except Exception as de:
+        print(f"[PER-FILE WARNING] Skipping {filename} ({file_id}) because cv2 image decoding threw an exception: {de}", flush=True)
+        return "skipped", f"Image decoding exception: {de}"
+
     if img is None:
-        print(f"[WARNING] Skipping {filename} ({file_id}) because image decoding failed.")
-        return False
+        print(f"[PER-FILE WARNING] Skipping {filename} ({file_id}) because image decoding returned None (corrupted or unsupported format).", flush=True)
+        return "skipped", "Corrupted image or unsupported image format"
 
     # 6. Pass image bytes to face_engine.detect_faces()
-    faces = face_engine.detect_faces(file_bytes)
+    try:
+        faces = face_engine.detect_faces(file_bytes)
+    except Exception as e:
+        print(f"[PER-FILE WARNING] Face detection failed on {filename} ({file_id}): {e}", flush=True)
+        return "skipped", f"Face detection error: {e}"
 
     # 7. Persist photo record
     photo_id = db.insert_photo(
@@ -177,7 +196,7 @@ def _process_one_file_sequential(service, face_engine, job_id: int, file_entry: 
             face["embedding"]
         )
     db.set_photo_face_count(photo_id, len(faces))
-    return False
+    return "processed", ""
 
 
 def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = None):
@@ -219,7 +238,7 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
         # Merge and Deduplicate (Level 1)
         total_discovered = len(all_files)
         deduped_files, duplicate_count = _merge_and_dedupe(all_files)
-        _update_status(total_files=total_discovered, duplicate_files_skipped=duplicate_count)
+        _update_status(total_files=total_discovered, duplicate_files_skipped=duplicate_count, skipped_files=0)
 
         if not deduped_files:
             error_message = last_error or "No images found in that folder. Please make sure the folder contains images (JPEG, PNG, WEBP, HEIC) and is shared as Anyone with the link -> Viewer."
@@ -250,30 +269,45 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
             _update_status(status="error", message=err_msg)
             return
 
-
-
         seen_hashes = set()
         level_2_skips = 0
+        skipped_count = 0
         processed_count = 0
 
-        print(f"[FACE DETECTION START] job_id={job_id} starting CPU face detection on {len(deduped_files)} photos")
+        print(f"[FACE DETECTION START] job_id={job_id} starting CPU face detection on {len(deduped_files)} photos", flush=True)
         for i, f in enumerate(deduped_files, start=1):
-            db.update_job(
-                job_id,
+            _update_status(
                 status="detecting",
                 processed_files=processed_count,
+                duplicate_files_skipped=duplicate_count + level_2_skips,
+                skipped_files=skipped_count,
                 message=f"Processing {f['name']} ({i}/{len(deduped_files)})",
             )
-            skipped = _process_one_file_sequential(service, face_engine, job_id, f, seen_hashes)
-            if skipped:
+            status, reason = _process_one_file_sequential(service, face_engine, job_id, f, seen_hashes)
+            if status == "duplicate":
                 level_2_skips += 1
-                db.update_job(job_id, duplicate_files_skipped=duplicate_count + level_2_skips)
-            else:
+                _update_status(duplicate_files_skipped=duplicate_count + level_2_skips)
+            elif status == "skipped":
+                skipped_count += 1
+                _update_status(skipped_files=skipped_count)
+            elif status == "processed":
                 processed_count += 1
-                db.update_job(job_id, processed_files=processed_count)
+                _update_status(processed_files=processed_count)
 
-        print(f"[CLUSTERING START] job_id={job_id} grouping detected faces for {processed_count} photos")
-        db.update_job(job_id, status="clustering", message="Grouping faces into people...", processed_files=processed_count)
+        total_skipped = duplicate_count + level_2_skips + skipped_count
+        print(f"[PHOTO PROCESSING COMPLETE] job_id={job_id} summary: discovered={total_discovered}, processed={processed_count}, duplicates_skipped={duplicate_count + level_2_skips}, inaccessible_or_corrupt_skipped={skipped_count}", flush=True)
+
+        if processed_count == 0:
+            error_message = (
+                f"None of the {total_discovered} discovered files could be processed. "
+                "The files may be restricted, inaccessible, or in an unsupported format."
+            )
+            _update_status(status="error", message=error_message, processed_files=0, skipped_files=skipped_count)
+            print(f"[JOB COMPLETE] job_id={job_id} status=error msg='{error_message}'", flush=True)
+            return
+
+        print(f"[CLUSTERING START] job_id={job_id} grouping detected faces for {processed_count} photos", flush=True)
+        _update_status(status="clustering", message="Grouping faces into people...", processed_files=processed_count)
 
         face_rows = db.get_faces_for_job(job_id)
         assignments = cluster_faces(face_rows)  # face_id -> cluster_index
@@ -289,12 +323,22 @@ def run_job(job_id: int, folder_links: list[str], public_token: Optional[str] = 
             db.set_face_person(face["id"], cluster_to_person[cluster_idx])
 
         people_count = len(cluster_to_person)
-        db.update_job(
-            job_id,
+        
+        # Build clear completion message
+        if skipped_count > 0:
+            completion_message = f"Processing completed. {processed_count} photo{'s were' if processed_count != 1 else ' was'} analyzed ({people_count} distinct people). {skipped_count} file{'s could' if skipped_count != 1 else ' could'} not be processed."
+        else:
+            completion_message = f"Done. Found {people_count} distinct people across {processed_count} photos."
+
+        _update_status(
             status="done",
-            message=f"Done. Found {people_count} distinct people across {processed_count} photos.",
+            message=completion_message,
+            total_files=total_discovered,
+            processed_files=processed_count,
+            duplicate_files_skipped=duplicate_count + level_2_skips,
+            skipped_files=skipped_count,
         )
-        print(f"[JOB COMPLETE] job_id={job_id} status=done (people={people_count}, photos={processed_count})")
+        print(f"[JOB COMPLETE] job_id={job_id} status=done (people={people_count}, photos={processed_count}, skipped={skipped_count})", flush=True)
 
     except Exception as e:
         err_msg = f"{type(e).__name__}: {e}"
@@ -344,6 +388,7 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
 
         seen_hashes = set()
         level_2_skips = 0
+        skipped_count = 0
         processed_count = 0
 
         for i, (filename, file_path_str, mime_type) in enumerate(image_items, start=1):
@@ -351,6 +396,8 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
                 job_id,
                 status="detecting",
                 processed_files=processed_count,
+                duplicate_files_skipped=level_2_skips,
+                skipped_files=skipped_count,
                 message=f"Processing {filename} ({i}/{len(image_items)})",
             )
             try:
@@ -360,6 +407,8 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
                 size_bytes = len(file_bytes)
                 if size_bytes > MAX_FILE_SIZE_BYTES:
                     print(f"[WARNING] Skipping {filename} because size {size_bytes} exceeds limit of {MAX_FILE_SIZE_BYTES} bytes.")
+                    skipped_count += 1
+                    db.update_job(job_id, skipped_files=skipped_count)
                     continue
 
                 content_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -373,6 +422,8 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
                 img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if img is None:
                     print(f"[WARNING] Skipping {filename} because image decoding failed.")
+                    skipped_count += 1
+                    db.update_job(job_id, skipped_files=skipped_count)
                     continue
 
                 faces = face_engine.detect_faces(file_bytes)
@@ -404,12 +455,25 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
 
             except Exception as fe:
                 print(f"[ERROR] Failed processing file {filename}: {fe}")
+                skipped_count += 1
+                db.update_job(job_id, skipped_files=skipped_count)
+
+        if processed_count == 0:
+            db.update_job(
+                job_id,
+                status="error",
+                message=f"None of the {total_discovered} uploaded files could be processed.",
+                processed_files=0,
+                skipped_files=skipped_count,
+            )
+            return
 
         db.update_job(
             job_id,
             status="clustering",
             message="Grouping faces into people...",
-            processed_files=processed_count
+            processed_files=processed_count,
+            skipped_files=skipped_count,
         )
 
         face_rows = db.get_faces_for_job(job_id)
@@ -426,10 +490,19 @@ def run_direct_upload_job(job_id: int, image_items: list[tuple[str, str, str]]):
             db.set_face_person(face["id"], cluster_to_person[cluster_idx])
 
         people_count = len(cluster_to_person)
+        if skipped_count > 0:
+            completion_message = f"Processing completed. {processed_count} photo{'s were' if processed_count != 1 else ' was'} analyzed ({people_count} distinct people). {skipped_count} file{'s could' if skipped_count != 1 else ' could'} not be processed."
+        else:
+            completion_message = f"Done. Found {people_count} distinct people across {processed_count} photos."
+
         db.update_job(
             job_id,
             status="done",
-            message=f"Done. Found {people_count} distinct people across {processed_count} photos.",
+            message=completion_message,
+            total_files=total_discovered,
+            processed_files=processed_count,
+            duplicate_files_skipped=level_2_skips,
+            skipped_files=skipped_count,
         )
 
     except Exception as e:

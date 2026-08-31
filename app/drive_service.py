@@ -140,7 +140,7 @@ def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = 
         params_dict = {
             "q": query,
             "spaces": "drive",
-            "fields": "nextPageToken, files(id, name, mimeType)",
+            "fields": "nextPageToken, files(id, name, mimeType, resourceKey, size)",
             "pageSize": "1000",
             "supportsAllDrives": "true",
             "includeItemsFromAllDrives": "true",
@@ -175,6 +175,10 @@ def list_images_in_folder(service, folder_id: str, resourcekey: Optional[str] = 
 
         for f in data.get("files", []):
             if f.get("mimeType") in IMAGE_MIME_TYPES or str(f.get("mimeType", "")).startswith("image/"):
+                if f.get("resourceKey"):
+                    f["resourcekey"] = f.get("resourceKey")
+                elif resourcekey:
+                    f["resourcekey"] = resourcekey
                 files.append(f)
         page_token = data.get("nextPageToken")
         if not page_token:

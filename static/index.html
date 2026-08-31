@@ -84,12 +84,16 @@
           <span class="stat-lbl">Files Discovered</span>
         </div>
         <div class="stat-card">
-          <span class="stat-val" id="stat-skipped">0</span>
-          <span class="stat-lbl">Duplicates Skipped</span>
+          <span class="stat-val" id="stat-processed">0</span>
+          <span class="stat-lbl">Photos Processed</span>
         </div>
         <div class="stat-card">
-          <span class="stat-val" id="stat-processed">0</span>
-          <span class="stat-lbl">Unique Processed</span>
+          <span class="stat-val" id="stat-skipped">0</span>
+          <span class="stat-lbl">Skipped</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val" id="stat-duplicates">0</span>
+          <span class="stat-lbl">Duplicates Skipped</span>
         </div>
         <div class="stat-card">
           <span class="stat-val" id="stat-faces">0</span>
@@ -116,12 +120,16 @@
         <span class="stat-lbl">Files Discovered</span>
       </div>
       <div class="stat-card">
-        <span class="stat-val" id="final-skipped">0</span>
-        <span class="stat-lbl">Duplicates Skipped</span>
+        <span class="stat-val" id="final-processed">0</span>
+        <span class="stat-lbl">Photos Processed</span>
       </div>
       <div class="stat-card">
-        <span class="stat-val" id="final-processed">0</span>
-        <span class="stat-lbl">Unique Processed</span>
+        <span class="stat-val" id="final-skipped">0</span>
+        <span class="stat-lbl">Skipped</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="final-duplicates">0</span>
+        <span class="stat-lbl">Duplicates Skipped</span>
       </div>
       <div class="stat-card">
         <span class="stat-val" id="final-faces">0</span>
@@ -133,6 +141,12 @@
       </div>
     </div>
     
+    <!-- Notice / Warning banner if files were skipped -->
+    <div id="completion-warning" class="warning-banner" hidden>
+      <span class="warning-icon">&#9888;</span>
+      <span id="completion-warning-text" class="warning-text"></span>
+    </div>
+
     <div class="loader-controls" style="margin-top: 30px; display: flex; justify-content: center; gap: 16px;">
       <button id="completion-back-btn" class="btn-secondary" type="button">&larr; Back to Home</button>
       <button id="completion-view-btn" class="btn-primary" type="button">View Results &rarr;</button>

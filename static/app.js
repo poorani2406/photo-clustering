@@ -19,9 +19,19 @@ const backToHomeBtn = $("#back-to-home");
 
 // Stats elements
 const statDiscovered = $("#stat-discovered");
-const statSkipped = $("#stat-skipped");
 const statProcessed = $("#stat-processed");
+const statSkipped = $("#stat-skipped");
+const statDuplicates = $("#stat-duplicates");
 const statFaces = $("#stat-faces");
+
+const finalDiscovered = $("#final-discovered");
+const finalProcessed = $("#final-processed");
+const finalSkipped = $("#final-skipped");
+const finalDuplicates = $("#final-duplicates");
+const finalFaces = $("#final-faces");
+const finalPeople = $("#final-people");
+const completionWarning = $("#completion-warning");
+const completionWarningText = $("#completion-warning-text");
 
 const peopleGrid = $("#people-grid");
 const peopleCount = $("#people-count");
@@ -114,9 +124,11 @@ function resetToHome() {
   statusLine.hidden = true;
 
   statDiscovered.textContent = "0";
-  statSkipped.textContent = "0";
   statProcessed.textContent = "0";
+  statSkipped.textContent = "0";
+  statDuplicates.textContent = "0";
   statFaces.textContent = "0";
+  if (completionWarning) completionWarning.hidden = true;
 
   showOnly(loaderPanel);
 }
@@ -185,9 +197,11 @@ async function startProcessing() {
   
   // Clear statistics counters
   statDiscovered.textContent = "0";
-  statSkipped.textContent = "0";
   statProcessed.textContent = "0";
+  statSkipped.textContent = "0";
+  statDuplicates.textContent = "0";
   statFaces.textContent = "0";
+  if (completionWarning) completionWarning.hidden = true;
 
   try {
     const res = await fetch("/api/process", {
@@ -245,8 +259,9 @@ async function pollJob() {
 
     // Update stats cards dynamically
     statDiscovered.textContent = job.total_files || 0;
-    statSkipped.textContent = job.duplicate_files_skipped || 0;
     statProcessed.textContent = job.processed_files || 0;
+    statSkipped.textContent = job.skipped_files || 0;
+    statDuplicates.textContent = job.duplicate_files_skipped || 0;
     statFaces.textContent = job.faces_count || 0;
 
     if (job.status === "error" || job.status === "failed") {
@@ -281,11 +296,20 @@ async function showCompletionPanel(job) {
   const people = await fetch(`/api/jobs/${currentJobId}/people`).then((r) => r.json());
   
   // Set summary numbers
-  $("#final-discovered").textContent = job.total_files || 0;
-  $("#final-skipped").textContent = job.duplicate_files_skipped || 0;
-  $("#final-processed").textContent = job.processed_files || 0;
-  $("#final-faces").textContent = job.faces_count || 0;
-  $("#final-people").textContent = people.length;
+  finalDiscovered.textContent = job.total_files || 0;
+  finalProcessed.textContent = job.processed_files || 0;
+  finalSkipped.textContent = job.skipped_files || 0;
+  finalDuplicates.textContent = job.duplicate_files_skipped || 0;
+  finalFaces.textContent = job.faces_count || 0;
+  finalPeople.textContent = people.length;
+
+  if (job.skipped_files && job.skipped_files > 0) {
+    const count = job.skipped_files;
+    completionWarningText.textContent = `Notice: ${count} file${count > 1 ? "s were" : " was"} skipped due to permission restrictions, network timeouts, or unreadable formats. All other ${job.processed_files || 0} photos were successfully analyzed and clustered.`;
+    completionWarning.hidden = false;
+  } else {
+    completionWarning.hidden = true;
+  }
 
   showOnly(completionPanel);
 }

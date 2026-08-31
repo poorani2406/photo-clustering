@@ -303,6 +303,34 @@ body {
   letter-spacing: 0.05em;
 }
 
+/* ---------- Warning / Notice Banner ---------- */
+
+.warning-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-top: 20px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: left;
+  animation: fadeIn 0.3s ease;
+}
+
+.warning-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  flex: 1;
+}
+
 /* ---------- Results Screen Title ---------- */
 
 .section-heading {

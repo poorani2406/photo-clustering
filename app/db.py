@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     total_files INTEGER DEFAULT 0,
     processed_files INTEGER DEFAULT 0,
     duplicate_files_skipped INTEGER DEFAULT 0,
+    skipped_files INTEGER DEFAULT 0,
     oauth_token TEXT,
     message TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -111,6 +112,8 @@ def init_db():
                 conn.execute("ALTER TABLE jobs ADD COLUMN public_job_token TEXT UNIQUE;")
             if "duplicate_files_skipped" not in job_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN duplicate_files_skipped INTEGER DEFAULT 0;")
+            if "skipped_files" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN skipped_files INTEGER DEFAULT 0;")
         except Exception as e:
             print(f"[DB INIT WARNING] jobs table check: {e}", flush=True)
 
@@ -146,6 +149,7 @@ def create_job() -> tuple[int, str]:
         "total_files": 0,
         "processed_files": 0,
         "duplicate_files_skipped": 0,
+        "skipped_files": 0,
         "message": "Connecting to Google Drive...",
         "created_at": None,
     }
