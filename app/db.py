@@ -78,8 +78,9 @@ _ID_TO_TOKEN_CACHE: dict[int, str] = {}
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), timeout=5.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000;")
     try:
         yield conn
         conn.commit()
@@ -91,6 +92,7 @@ def get_conn():
         raise
     finally:
         conn.close()
+
 
 
 def init_db():
