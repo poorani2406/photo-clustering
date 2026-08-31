@@ -95,19 +95,13 @@ def get_conn():
 
 
 def init_db():
-    print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH}...")
+    print(f"[PROCESS STARTUP] Initializing SQLite database at {DB_PATH}...", flush=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    raw_conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    try:
-        raw_conn.execute("PRAGMA journal_mode=WAL;")
-        raw_conn.execute("PRAGMA synchronous=NORMAL;")
-        raw_conn.execute("PRAGMA busy_timeout=30000;")
-        raw_conn.executescript(SCHEMA)
-        raw_conn.commit()
-    finally:
-        raw_conn.close()
-
-
+    with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+        conn.executescript(SCHEMA)
         
         # Ensure optional/extended columns exist in existing deployments
         try:
@@ -118,7 +112,7 @@ def init_db():
             if "duplicate_files_skipped" not in job_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN duplicate_files_skipped INTEGER DEFAULT 0;")
         except Exception as e:
-            print(f"[DB INIT WARNING] jobs table check: {e}")
+            print(f"[DB INIT WARNING] jobs table check: {e}", flush=True)
 
         try:
             cursor = conn.execute("PRAGMA table_info(photos)")
@@ -128,9 +122,10 @@ def init_db():
             if "storage_path" not in photo_cols:
                 conn.execute("ALTER TABLE photos ADD COLUMN storage_path TEXT;")
         except Exception as e:
-            print(f"[DB INIT WARNING] photos table check: {e}")
+            print(f"[DB INIT WARNING] photos table check: {e}", flush=True)
             
-        print("[PROCESS STARTUP] SQLite database initialized and ready.")
+    print("[PROCESS STARTUP] SQLite database initialized and ready.", flush=True)
+
 
 
 
