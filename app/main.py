@@ -242,8 +242,17 @@ def get_job(public_job_token: str):
     job_dict = dict(job)
     # Hide internal integer id from the browser
     job_dict["id"] = public_job_token
-    job_dict["faces_count"] = 0
+    try:
+        with db.get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(faces.id) AS cnt FROM faces JOIN photos ON faces.photo_id = photos.id WHERE photos.job_id = ?",
+                (job["id"],)
+            ).fetchone()
+            job_dict["faces_count"] = row["cnt"] if row else 0
+    except Exception:
+        job_dict["faces_count"] = 0
     return job_dict
+
 
 
 
