@@ -162,12 +162,7 @@ def get_job_by_token(public_job_token: str) -> dict | None:
 
     clean_token = str(public_job_token).strip()
 
-    # 1. Fast in-memory cache
-    if clean_token in _JOB_CACHE:
-        cached = _JOB_CACHE[clean_token]
-        return dict(cached)
-
-    # 2. Database read
+    # 1. Primary: Fresh database read for multi-process consistency
     try:
         with get_conn() as conn:
             row = conn.execute(
@@ -188,8 +183,30 @@ def get_job_by_token(public_job_token: str) -> dict | None:
     except Exception as e:
         print(f"[ERROR] [get_job_by_token db read error]: {e}", flush=True)
 
+    # 2. Secondary fallback: in-memory cache
+    if clean_token in _JOB_CACHE:
+        return dict(_JOB_CACHE[clean_token])
+
     print(f"[JOB GET] job_id={clean_token} -> 404 Not Found", flush=True)
     return None
+
+
+
+def update_job_by_token(token: str, **fields):
+    if not token or not fields:
+        return
+    clean_token = str(token).strip()
+    if clean_token in _JOB_CACHE:
+        _JOB_CACHE[clean_token].update(fields)
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    try:
+        with get_conn() as conn:
+            conn.execute(f"UPDATE jobs SET {cols} WHERE public_job_token = ?", (*fields.values(), clean_token))
+    except Exception as e:
+        print(f"[ERROR] [update_job_by_token db error for {clean_token}]: {e}", flush=True)
+
+    status_val = fields.get("status", "")
+    print(f"[JOB UPDATE] token={clean_token} status={status_val}", flush=True)
 
 
 def update_job(job_id: int, **fields):
@@ -213,6 +230,7 @@ def update_job(job_id: int, **fields):
 
     status_val = fields.get("status", "")
     print(f"[JOB UPDATE] job_id={job_id} status={status_val}", flush=True)
+
 
 
 
